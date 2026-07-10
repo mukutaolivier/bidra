@@ -29,6 +29,24 @@ export class UserRepository extends BaseRepository<User> {
   }
 
   /**
+   * Find user by email verification token
+   */
+  async findByEmailVerificationToken(token: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { emailVerificationToken: token },
+    });
+  }
+
+  /**
+   * Find user by password reset token
+   */
+  async findByPasswordResetToken(token: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { passwordResetToken: token },
+    });
+  }
+
+  /**
    * Find users by role
    */
   async findByRole(role: UserRole, options?: FindAllOptions): Promise<User[]> {
