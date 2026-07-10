@@ -1,37 +1,53 @@
 import { PrismaClient } from "@prisma/client";
 import { UserRepository } from "../../repositories/user.repository";
-import { UserRole, UserStatus } from "@prisma/client";
+import { UserStatus } from "@prisma/client";
 import { EntityNotFoundError } from "../../exceptions";
 
 const prisma = new PrismaClient();
 const userRepo = new UserRepository(prisma);
 
 describe("UserRepository", () => {
+  let testRole: any;
+
   beforeAll(async () => {
     await prisma.$connect();
+    
+    // Create test role
+    testRole = await prisma.role.create({
+      data: {
+        name: "user",
+        description: "Test user role",
+        isSystem: true,
+      },
+    });
   });
 
   afterAll(async () => {
+    await prisma.role.deleteMany();
     await prisma.$disconnect();
   });
 
   beforeEach(async () => {
+    await prisma.userRole.deleteMany();
     await prisma.user.deleteMany();
   });
 
   describe("create", () => {
-    it("should create a new user", async () => {
+    it("should create a new user with role", async () => {
       const userData = {
         email: "test@example.no",
         name: "Test User",
         language: "no",
-        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       };
 
       const user = await userRepo.create(userData);
 
-      expect(user).toMatchObject(userData);
+      expect(user.email).toBe(userData.email);
+      expect(user.name).toBe(userData.name);
       expect(user.id).toBeDefined();
       expect(user.createdAt).toBeInstanceOf(Date);
     });
@@ -42,14 +58,15 @@ describe("UserRepository", () => {
         name: "Test User 2",
         phone: "+4741234567",
         language: "en",
-        role: UserRole.ORG_ADMIN,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       };
 
       const user = await userRepo.create(userData);
 
       expect(user.phone).toBe(userData.phone);
-      expect(user.role).toBe(UserRole.ORG_ADMIN);
     });
   });
 
@@ -59,8 +76,10 @@ describe("UserRepository", () => {
         email: "find@example.no",
         name: "Find Me",
         language: "no",
-        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
 
       const found = await userRepo.findById(created.id);
@@ -85,8 +104,10 @@ describe("UserRepository", () => {
         email: "unique@example.no",
         name: "Unique User",
         language: "no",
-        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
 
       const found = await userRepo.findByEmail(created.email);
@@ -109,15 +130,19 @@ describe("UserRepository", () => {
         email: "user1@example.no",
         name: "User 1",
         language: "no",
-        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
       await userRepo.create({
         email: "user2@example.no",
         name: "User 2",
         language: "no",
-        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
 
       const result = await userRepo.findAll({ page: 1, limit: 10 });
@@ -126,30 +151,34 @@ describe("UserRepository", () => {
       expect(result.pagination.total).toBe(2);
     });
 
-    it("should filter by role", async () => {
+    it("should filter by status", async () => {
       await userRepo.create({
-        email: "admin@example.no",
-        name: "Admin",
+        email: "active@example.no",
+        name: "Active User",
         language: "no",
-        role: UserRole.PLATFORM_ADMIN,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
       await userRepo.create({
-        email: "user@example.no",
-        name: "User",
+        email: "suspended@example.no",
+        name: "Suspended User",
         language: "no",
-        role: UserRole.USER,
-        status: UserStatus.ACTIVE,
+        status: UserStatus.SUSPENDED,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
 
       const result = await userRepo.findAll({
         page: 1,
         limit: 10,
-        where: { role: UserRole.PLATFORM_ADMIN },
+        where: { status: UserStatus.ACTIVE },
       });
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].role).toBe(UserRole.PLATFORM_ADMIN);
+      expect(result.data[0].status).toBe(UserStatus.ACTIVE);
     });
   });
 
@@ -159,8 +188,10 @@ describe("UserRepository", () => {
         email: "update@example.no",
         name: "Original Name",
         language: "no",
-        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
 
       const updated = await userRepo.update(created.id, {
@@ -180,8 +211,10 @@ describe("UserRepository", () => {
         email: "status@example.no",
         name: "Status User",
         language: "no",
-        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
 
       const updated = await userRepo.updateStatus(created.id, UserStatus.SUSPENDED);
@@ -196,8 +229,10 @@ describe("UserRepository", () => {
         email: "delete@example.no",
         name: "Delete Me",
         language: "no",
-        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
       });
 
       await userRepo.delete(created.id);
@@ -207,6 +242,52 @@ describe("UserRepository", () => {
       });
 
       expect(deleted?.deletedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  describe("role management", () => {
+    it("should assign role to user", async () => {
+      const user = await userRepo.create({
+        email: "role@example.no",
+        name: "Role User",
+        language: "no",
+        status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
+      });
+
+      await userRepo.assignRole(user.id, testRole.id);
+
+      const userWithRoles = await prisma.user.findUnique({
+        where: { id: user.id },
+        include: { roles: { include: { role: true } } },
+      });
+
+      expect(userWithRoles?.roles).toHaveLength(1);
+      expect(userWithRoles?.roles[0].role.name).toBe("user");
+    });
+
+    it("should remove role from user", async () => {
+      const user = await userRepo.create({
+        email: "remove-role@example.no",
+        name: "Remove Role User",
+        language: "no",
+        status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
+      });
+
+      await userRepo.assignRole(user.id, testRole.id);
+      await userRepo.removeRole(user.id, testRole.id);
+
+      const userWithRoles = await prisma.user.findUnique({
+        where: { id: user.id },
+        include: { roles: true },
+      });
+
+      expect(userWithRoles?.roles).toHaveLength(0);
     });
   });
 });
