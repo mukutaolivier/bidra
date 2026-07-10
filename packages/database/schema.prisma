@@ -7,10 +7,559 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Placeholder schema - actual models will be added later
-model SystemInfo {
-  id        String   @id @default(cuid())
-  version   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+  USER
+  ORG_ADMIN
+  PLATFORM_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum OrganizationType {
+  NON_PROFIT
+  CHARITY
+  COMMUNITY_GROUP
+  SPORTS_CLUB
+  SCHOOL
+  OTHER
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum CampaignVisibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum NeedType {
+  MONEY
+  VOLUNTEER
+  GOODS
+  EQUIPMENT
+  SKILLS
+  OTHER
+}
+
+enum NeedStatus {
+  OPEN
+  IN_PROGRESS
+  FULFILLED
+  CANCELLED
+}
+
+enum ContributionType {
+  MONEY
+  VOLUNTEER
+  GOODS
+  EQUIPMENT
+  SKILLS
+  OTHER
+}
+
+enum ContributionStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum ItemCondition {
+  NEW
+  GOOD
+  FAIR
+  POOR
+}
+
+enum DeliveryMethod {
+  DROP_OFF
+  PICKUP
+  SHIPPING
+}
+
+enum DeliveryStatus {
+  PENDING
+  SCHEDULED
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+}
+
+enum LoanReturnStatus {
+  PENDING
+  ON_LOAN
+  RETURNED
+  OVERDUE
+  DAMAGED
+}
+
+enum TimeCreditStatus {
+  ACTIVE
+  USED
+  EXPIRED
+  CANCELLED
+}
+
+enum PartnerStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+// ============================================================================
+// CORE ENTITIES
+// ============================================================================
+
+/// Platform user - can be contributor, organization admin, or platform admin
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String
+  phone     String?
+  language  String     @default("no")
+  role      UserRole   @default(USER)
+  status    UserStatus @default(ACTIVE)
+  
+  // Audit fields
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  contributions Contribution[]
+  timeCredits   TimeCredit[]
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
+}
+
+/// Norwegian organization (non-profit, charity, community group, etc.)
+model Organization {
+  id                  String             @id @default(cuid())
+  name                String
+  description         String?
+  organizationType    OrganizationType
+  
+  // Contact information
+  contactEmail        String
+  contactPhone        String?
+  website             String?
+  
+  // Address
+  address             String?
+  postalCode          String?
+  city                String?
+  
+  // Norwegian organization number (9 digits)
+  organizationNumber  String             @unique
+  
+  // Verification
+  verificationStatus  VerificationStatus @default(PENDING)
+  verificationNote    String?
+  verifiedAt          DateTime?
+  
+  // Stripe Connect (for receiving payments)
+  stripeAccountId     String?            @unique
+  stripeOnboarded     Boolean            @default(false)
+  
+  // Status
+  status              OrganizationStatus @default(ACTIVE)
+  
+  // Audit fields
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  deletedAt           DateTime?
+
+  // Relations
+  campaigns           Campaign[]
+  timeCredits         TimeCredit[]
+
+  @@index([organizationNumber])
+  @@index([verificationStatus])
+  @@index([status])
+  @@index([city])
+}
+
+/// Campaign - fundraising, volunteer recruitment, or resource gathering
+model Campaign {
+  id             String             @id @default(cuid())
+  organizationId String
+  
+  // Content
+  title          String
+  description    String
+  story          String?            @db.Text
+  images         Json?              // Array of image URLs
+  
+  // Goals
+  goal           Decimal?           @db.Decimal(10, 2) // Financial goal if monetary
+  
+  // Timeline
+  startDate      DateTime
+  endDate        DateTime?
+  
+  // Location
+  location       String?
+  address        String?
+  postalCode     String?
+  city           String?
+  
+  // Status and visibility
+  status         CampaignStatus     @default(DRAFT)
+  visibility     CampaignVisibility @default(PUBLIC)
+  
+  // Audit fields
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  deletedAt      DateTime?
+
+  // Relations
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  needs          Need[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([visibility])
+  @@index([city])
+  @@index([startDate])
+  @@index([endDate])
+  @@index([organizationId, status])
+}
+
+/// Need - specific requirement for a campaign
+model Need {
+  id              String         @id @default(cuid())
+  campaignId      String
+  
+  // Content
+  title           String
+  description     String
+  
+  // Type and quantity
+  needType        NeedType
+  quantity        Int?
+  quantityUnit    String?
+  estimatedValue  Decimal?       @db.Decimal(10, 2)
+  
+  // Timeline
+  deadline        DateTime?
+  
+  // Status
+  status          NeedStatus     @default(OPEN)
+  
+  // Audit fields
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  campaign        Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contributions   Contribution[]
+
+  @@index([campaignId])
+  @@index([needType])
+  @@index([status])
+  @@index([deadline])
+  @@index([campaignId, status])
+}
+
+// ============================================================================
+// CONTRIBUTIONS (Base + Type-Specific)
+// ============================================================================
+
+/// Base contribution record
+model Contribution {
+  id                     String                  @id @default(cuid())
+  needId                 String
+  userId                 String
+  
+  // Type
+  contributionType       ContributionType
+  
+  // Status
+  status                 ContributionStatus      @default(PENDING)
+  
+  // Notes
+  message                String?
+  
+  // Audit fields
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  deletedAt              DateTime?
+
+  // Relations
+  need                   Need                    @relation(fields: [needId], references: [id], onDelete: Cascade)
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Type-specific data (one-to-one optional relations)
+  moneyContribution      MoneyContribution?
+  volunteerContribution  VolunteerContribution?
+  goodsContribution      GoodsContribution?
+  equipmentContribution  EquipmentContribution?
+  skillsContribution     SkillsContribution?
+
+  @@index([needId])
+  @@index([userId])
+  @@index([contributionType])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([needId, contributionType])
+}
+
+/// Money contribution - financial donation
+model MoneyContribution {
+  id                    String        @id @default(cuid())
+  contributionId        String        @unique
+  
+  // Payment details
+  amount                Decimal       @db.Decimal(10, 2)
+  currency              String        @default("NOK")
+  
+  // Stripe payment
+  stripePaymentIntentId String?       @unique
+  paymentStatus         PaymentStatus @default(PENDING)
+  
+  // Receipt
+  receiptUrl            String?
+  receiptIssuedAt       DateTime?
+  
+  // Audit fields
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  // Relations
+  contribution          Contribution  @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+
+  @@index([stripePaymentIntentId])
+  @@index([paymentStatus])
+}
+
+/// Volunteer contribution - time commitment
+model VolunteerContribution {
+  id             String            @id @default(cuid())
+  contributionId String            @unique
+  
+  // Time commitment
+  hours          Decimal           @db.Decimal(5, 2)
+  date           DateTime
+  startTime      String?
+  endTime        String?
+  
+  // Skills offered
+  skills         String?
+  
+  // Attendance tracking
+  checkedIn      Boolean           @default(false)
+  checkedInAt    DateTime?
+  checkedOut     Boolean           @default(false)
+  checkedOutAt   DateTime?
+  
+  // Audit fields
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  // Relations
+  contribution   Contribution      @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+
+  @@index([date])
+}
+
+/// Goods contribution - physical item donation
+model GoodsContribution {
+  id             String         @id @default(cuid())
+  contributionId String         @unique
+  
+  // Items (JSON array of {name, quantity, description, estimatedValue})
+  items          Json
+  
+  // Condition
+  condition      ItemCondition  @default(GOOD)
+  
+  // Delivery
+  deliveryMethod DeliveryMethod @default(DROP_OFF)
+  deliveryStatus DeliveryStatus @default(PENDING)
+  deliveryDate   DateTime?
+  
+  // Photos
+  photoUrls      Json?          // Array of photo URLs
+  
+  // Audit fields
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // Relations
+  contribution   Contribution   @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryStatus])
+  @@index([deliveryDate])
+}
+
+/// Equipment contribution - temporary item loan
+model EquipmentContribution {
+  id               String            @id @default(cuid())
+  contributionId   String            @unique
+  
+  // Equipment (JSON array of {name, description, estimatedValue, serialNumber})
+  equipment        Json
+  
+  // Loan period
+  loanPeriodStart  DateTime
+  loanPeriodEnd    DateTime
+  
+  // Condition tracking
+  condition        ItemCondition     @default(GOOD)
+  conditionNotes   String?
+  
+  // Return tracking
+  returnStatus     LoanReturnStatus  @default(PENDING)
+  returnedAt       DateTime?
+  returnNotes      String?
+  
+  // Photos
+  photoUrls        Json?             // Array of photo URLs
+  
+  // Audit fields
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // Relations
+  contribution     Contribution      @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+
+  @@index([loanPeriodEnd])
+  @@index([returnStatus])
+}
+
+/// Skills contribution - professional expertise
+model SkillsContribution {
+  id               String       @id @default(cuid())
+  contributionId   String       @unique
+  
+  // Skill details
+  skillDescription String
+  estimatedHours   Decimal      @db.Decimal(5, 2)
+  
+  // Delivery
+  deliveryDate     DateTime?
+  completedAt      DateTime?
+  
+  // Feedback
+  feedbackRating   Int?
+  feedbackComment  String?
+  
+  // Audit fields
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Relations
+  contribution     Contribution @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryDate])
+}
+
+// ============================================================================
+// SUPPORTING ENTITIES
+// ============================================================================
+
+/// Time credit - reward for volunteer contributions
+model TimeCredit {
+  id             String           @id @default(cuid())
+  userId         String
+  organizationId String
+  
+  // Credit details
+  hours          Decimal          @db.Decimal(5, 2)
+  description    String
+  
+  // Validity
+  earnedDate     DateTime         @default(now())
+  expiryDate     DateTime?
+  
+  // Status
+  status         TimeCreditStatus @default(ACTIVE)
+  usedAt         DateTime?
+  usedFor        String?
+  
+  // Audit fields
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  // Relations
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([expiryDate])
+  @@index([userId, status])
+}
+
+/// Recognition partner - business offering benefits to volunteers
+model RecognitionPartner {
+  id          String        @id @default(cuid())
+  
+  // Basic info
+  name        String
+  description String
+  logo        String?
+  website     String?
+  
+  // Contact
+  contactName String?
+  contactEmail String?
+  contactPhone String?
+  
+  // Benefits (JSON array of {title, description, discount, termsUrl})
+  benefits    Json
+  
+  // Location
+  city        String?
+  address     String?
+  
+  // Status
+  status      PartnerStatus @default(ACTIVE)
+  
+  // Audit fields
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([city])
 }
