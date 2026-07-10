@@ -3,29 +3,18 @@ import {
   Contribution,
   ContributionType,
   ContributionStatus,
-  MoneyContribution,
-  VolunteerContribution,
-  GoodsContribution,
-  EquipmentContribution,
-  SkillsContribution,
 } from "@prisma/client";
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
 
 /**
- * Full contribution with all type-specific data
- */
-type ContributionWithDetails = Contribution & {
-  moneyContribution?: MoneyContribution | null;
-  volunteerContribution?: VolunteerContribution | null;
-  goodsContribution?: GoodsContribution | null;
-  equipmentContribution?: EquipmentContribution | null;
-  skillsContribution?: SkillsContribution | null;
-};
-
-/**
- * Repository for Contribution entity and all contribution types
- * Handles polymorphic contribution model with type-specific tables
+ * Repository for Contribution entity
+ * 
+ * NOTE: This is a STUB implementation for Package 1/2.
+ * Full contribution type system (Money, Volunteer, Goods, Equipment, Skills)
+ * will be implemented in future packages as per the phased rollout plan.
+ * 
+ * Current schema only includes the base Contribution model.
  */
 export class ContributionRepository extends BaseRepository<Contribution> {
   constructor(prisma: PrismaClient) {
@@ -33,9 +22,9 @@ export class ContributionRepository extends BaseRepository<Contribution> {
   }
 
   /**
-   * Find contribution by ID with type-specific data
+   * Find contribution by ID
    */
-  async findById(id: string): Promise<ContributionWithDetails | null> {
+  async findById(id: string): Promise<Contribution | null> {
     return this.prisma.contribution.findUnique({
       where: { id },
       include: {
@@ -49,11 +38,6 @@ export class ContributionRepository extends BaseRepository<Contribution> {
           },
         },
         user: true,
-        moneyContribution: true,
-        volunteerContribution: true,
-        goodsContribution: true,
-        equipmentContribution: true,
-        skillsContribution: true,
       },
     });
   }
@@ -64,7 +48,7 @@ export class ContributionRepository extends BaseRepository<Contribution> {
   async findByNeed(
     needId: string,
     options?: FindAllOptions
-  ): Promise<ContributionWithDetails[]> {
+  ): Promise<Contribution[]> {
     return this.prisma.contribution.findMany({
       where: {
         needId,
@@ -73,11 +57,6 @@ export class ContributionRepository extends BaseRepository<Contribution> {
       orderBy: { createdAt: "desc" },
       include: {
         user: true,
-        moneyContribution: true,
-        volunteerContribution: true,
-        goodsContribution: true,
-        equipmentContribution: true,
-        skillsContribution: true,
       },
     });
   }
@@ -88,7 +67,7 @@ export class ContributionRepository extends BaseRepository<Contribution> {
   async findByUser(
     userId: string,
     options?: FindAllOptions
-  ): Promise<ContributionWithDetails[]> {
+  ): Promise<Contribution[]> {
     const { skip, take } = this.applyPagination(options?.pagination);
 
     return this.prisma.contribution.findMany({
@@ -109,11 +88,6 @@ export class ContributionRepository extends BaseRepository<Contribution> {
             },
           },
         },
-        moneyContribution: true,
-        volunteerContribution: true,
-        goodsContribution: true,
-        equipmentContribution: true,
-        skillsContribution: true,
       },
     });
   }
@@ -124,7 +98,7 @@ export class ContributionRepository extends BaseRepository<Contribution> {
   async findByType(
     contributionType: ContributionType,
     options?: FindAllOptions
-  ): Promise<ContributionWithDetails[]> {
+  ): Promise<Contribution[]> {
     const { skip, take } = this.applyPagination(options?.pagination);
 
     return this.prisma.contribution.findMany({
@@ -138,11 +112,6 @@ export class ContributionRepository extends BaseRepository<Contribution> {
       include: {
         user: true,
         need: true,
-        moneyContribution: true,
-        volunteerContribution: true,
-        goodsContribution: true,
-        equipmentContribution: true,
-        skillsContribution: true,
       },
     });
   }
@@ -165,7 +134,6 @@ export class ContributionRepository extends BaseRepository<Contribution> {
 
   /**
    * Create new contribution
-   * Note: Type-specific data must be created separately
    */
   async create(
     data: Omit<Contribution, "id" | "createdAt" | "updatedAt">
@@ -228,242 +196,64 @@ export class ContributionRepository extends BaseRepository<Contribution> {
     });
   }
 
-  // ========================================================================
-  // MONEY CONTRIBUTION METHODS
-  // ========================================================================
-
   /**
-   * Create money contribution with payment details
+   * Find contributions by status
    */
-  async createMoneyContribution(
-    contributionData: Omit<Contribution, "id" | "createdAt" | "updatedAt">,
-    moneyData: Omit<
-      MoneyContribution,
-      "id" | "contributionId" | "createdAt" | "updatedAt"
-    >
-  ): Promise<ContributionWithDetails> {
-    return this.prisma.contribution.create({
-      data: {
-        ...contributionData,
-        moneyContribution: {
-          create: moneyData,
-        },
+  async findByStatus(
+    status: ContributionStatus,
+    options?: FindAllOptions
+  ): Promise<Contribution[]> {
+    const { skip, take } = this.applyPagination(options?.pagination);
+
+    return this.prisma.contribution.findMany({
+      where: {
+        status,
+        deletedAt: null,
       },
+      skip,
+      take,
+      orderBy: { createdAt: "desc" },
       include: {
-        moneyContribution: true,
+        user: true,
+        need: true,
       },
     });
   }
 
   /**
-   * Update money contribution payment status
+   * Update contribution status
    */
-  async updateMoneyContribution(
-    contributionId: string,
-    data: Partial<
-      Omit<MoneyContribution, "id" | "contributionId" | "createdAt" | "updatedAt">
-    >
-  ): Promise<MoneyContribution> {
-    return this.prisma.moneyContribution.update({
-      where: { contributionId },
-      data,
-    });
-  }
-
-  // ========================================================================
-  // VOLUNTEER CONTRIBUTION METHODS
-  // ========================================================================
-
-  /**
-   * Create volunteer contribution with time commitment
-   */
-  async createVolunteerContribution(
-    contributionData: Omit<Contribution, "id" | "createdAt" | "updatedAt">,
-    volunteerData: Omit<
-      VolunteerContribution,
-      "id" | "contributionId" | "createdAt" | "updatedAt"
-    >
-  ): Promise<ContributionWithDetails> {
-    return this.prisma.contribution.create({
-      data: {
-        ...contributionData,
-        volunteerContribution: {
-          create: volunteerData,
-        },
-      },
-      include: {
-        volunteerContribution: true,
-      },
-    });
+  async updateStatus(
+    id: string,
+    status: ContributionStatus
+  ): Promise<Contribution> {
+    return this.update(id, { status });
   }
 
   /**
-   * Check-in volunteer
+   * Get contribution statistics by user
    */
-  async checkInVolunteer(contributionId: string): Promise<VolunteerContribution> {
-    return this.prisma.volunteerContribution.update({
-      where: { contributionId },
-      data: {
-        checkedIn: true,
-        checkedInAt: new Date(),
-      },
-    });
-  }
+  async getUserContributionStats(userId: string): Promise<{
+    total: number;
+    byType: Record<ContributionType, number>;
+    byStatus: Record<ContributionStatus, number>;
+  }> {
+    const contributions = await this.findByUser(userId);
 
-  /**
-   * Check-out volunteer
-   */
-  async checkOutVolunteer(contributionId: string): Promise<VolunteerContribution> {
-    return this.prisma.volunteerContribution.update({
-      where: { contributionId },
-      data: {
-        checkedOut: true,
-        checkedOutAt: new Date(),
-      },
-    });
-  }
+    const byType = contributions.reduce((acc, c) => {
+      acc[c.contributionType] = (acc[c.contributionType] || 0) + 1;
+      return acc;
+    }, {} as Record<ContributionType, number>);
 
-  // ========================================================================
-  // GOODS CONTRIBUTION METHODS
-  // ========================================================================
+    const byStatus = contributions.reduce((acc, c) => {
+      acc[c.status] = (acc[c.status] || 0) + 1;
+      return acc;
+    }, {} as Record<ContributionStatus, number>);
 
-  /**
-   * Create goods contribution with items
-   */
-  async createGoodsContribution(
-    contributionData: Omit<Contribution, "id" | "createdAt" | "updatedAt">,
-    goodsData: Omit<
-      GoodsContribution,
-      "id" | "contributionId" | "createdAt" | "updatedAt"
-    >
-  ): Promise<ContributionWithDetails> {
-    return this.prisma.contribution.create({
-      data: {
-        ...contributionData,
-        goodsContribution: {
-          create: goodsData,
-        },
-      },
-      include: {
-        goodsContribution: true,
-      },
-    });
-  }
-
-  /**
-   * Update goods delivery status
-   */
-  async updateGoodsDelivery(
-    contributionId: string,
-    data: Partial<
-      Omit<GoodsContribution, "id" | "contributionId" | "createdAt" | "updatedAt">
-    >
-  ): Promise<GoodsContribution> {
-    return this.prisma.goodsContribution.update({
-      where: { contributionId },
-      data,
-    });
-  }
-
-  // ========================================================================
-  // EQUIPMENT CONTRIBUTION METHODS
-  // ========================================================================
-
-  /**
-   * Create equipment contribution with loan details
-   */
-  async createEquipmentContribution(
-    contributionData: Omit<Contribution, "id" | "createdAt" | "updatedAt">,
-    equipmentData: Omit<
-      EquipmentContribution,
-      "id" | "contributionId" | "createdAt" | "updatedAt"
-    >
-  ): Promise<ContributionWithDetails> {
-    return this.prisma.contribution.create({
-      data: {
-        ...contributionData,
-        equipmentContribution: {
-          create: equipmentData,
-        },
-      },
-      include: {
-        equipmentContribution: true,
-      },
-    });
-  }
-
-  /**
-   * Mark equipment as returned
-   */
-  async returnEquipment(
-    contributionId: string,
-    returnNotes?: string
-  ): Promise<EquipmentContribution> {
-    return this.prisma.equipmentContribution.update({
-      where: { contributionId },
-      data: {
-        returnStatus: "RETURNED",
-        returnedAt: new Date(),
-        returnNotes,
-      },
-    });
-  }
-
-  // ========================================================================
-  // SKILLS CONTRIBUTION METHODS
-  // ========================================================================
-
-  /**
-   * Create skills contribution
-   */
-  async createSkillsContribution(
-    contributionData: Omit<Contribution, "id" | "createdAt" | "updatedAt">,
-    skillsData: Omit<
-      SkillsContribution,
-      "id" | "contributionId" | "createdAt" | "updatedAt"
-    >
-  ): Promise<ContributionWithDetails> {
-    return this.prisma.contribution.create({
-      data: {
-        ...contributionData,
-        skillsContribution: {
-          create: skillsData,
-        },
-      },
-      include: {
-        skillsContribution: true,
-      },
-    });
-  }
-
-  /**
-   * Mark skills contribution as completed
-   */
-  async completeSkillsContribution(
-    contributionId: string
-  ): Promise<SkillsContribution> {
-    return this.prisma.skillsContribution.update({
-      where: { contributionId },
-      data: {
-        completedAt: new Date(),
-      },
-    });
-  }
-
-  /**
-   * Add feedback to skills contribution
-   */
-  async addSkillsFeedback(
-    contributionId: string,
-    rating: number,
-    comment?: string
-  ): Promise<SkillsContribution> {
-    return this.prisma.skillsContribution.update({
-      where: { contributionId },
-      data: {
-        feedbackRating: rating,
-        feedbackComment: comment,
-      },
-    });
+    return {
+      total: contributions.length,
+      byType,
+      byStatus,
+    };
   }
 }
