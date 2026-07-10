@@ -1,5 +1,9 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
   provider = "prisma-client-js"
+  output   = "../../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -8,27 +12,492 @@ datasource db {
 }
 
 // ============================================================================
-// ENUMS
+// AUTHENTICATION & AUTHORIZATION
 // ============================================================================
 
-enum UserRole {
-  USER
-  ORG_ADMIN
-  PLATFORM_ADMIN
+/// Platform user - can be contributor, organization admin, or platform admin
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String
+  phone     String?
+  language  String     @default("no")
+  
+  // Authentication fields
+  passwordHash              String?   // Argon2id hash, null for social-only accounts
+  emailVerified             Boolean   @default(false)
+  emailVerificationToken    String?   @unique
+  emailVerificationExpiry   DateTime?
+  
+  passwordResetToken        String?   @unique
+  passwordResetExpiry       DateTime?
+  
+  // Security
+  failedLoginAttempts       Int       @default(0)
+  accountLockedUntil        DateTime?
+  lastLoginAt               DateTime?
+  lastLoginIp               String?
+  
+  // OAuth (explicitly disabled per Package 2 scope)
+  // vippsId                String?   @unique
+  // facebookId             String?   @unique
+  // googleId               String?   @unique
+  
+  // Password history (JSON array of Argon2id hashes for password reuse prevention)
+  passwordHistory           Json?
+  
+  // Status
+  status    UserStatus @default(ACTIVE)
+  
+  // Audit fields
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  roles               UserRole[]
+  sessions            UserSession[]
+  refreshTokens       RefreshToken[]
+  emailVerifications  EmailVerificationToken[]
+  passwordResets      PasswordResetToken[]
+  auditLogs           AuthenticationAuditLog[]
+  consents            ConsentRecord[]
+  contributions       Contribution[]
+  timeCredits         TimeCredit[]
+
+  @@index([email])
+  @@index([status])
+  @@index([emailVerificationToken])
+  @@index([passwordResetToken])
 }
+
+/// User session for tracking active logins
+model UserSession {
+  id              String    @id @default(cuid())
+  userId          String
+  token           String    @unique // Hashed session identifier
+  refreshTokenId  String?   @unique // Link to refresh token
+  
+  // Device tracking
+  userAgent       String?
+  ipAddress       String?
+  deviceName      String?   // User-provided device name
+  
+  // Session lifecycle
+  createdAt       DateTime  @default(now())
+  lastActivityAt  DateTime  @default(now())
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  revokedReason   String?   // "user_logout", "admin_revoke", "token_reuse", "password_change"
+  
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken    RefreshToken? @relation(fields: [refreshTokenId], references: [id], onDelete: SetNull)
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@index([userId, revokedAt])
+}
+
+/// Refresh token for JWT token rotation
+model RefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  token        String    @unique // Argon2id hashed refresh token
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  replacedBy   String?   // Token ID that replaced this one
+  revokedReason String?  // "rotation", "logout", "reuse_detected", "password_change"
+  
+  // Device tracking (optional)
+  userAgent    String?
+  ipAddress    String?
+  
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session      UserSession?
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@index([userId, revokedAt])
+}
+
+/// Email verification token
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique // Argon2id hashed token
+  email     String    // Email being verified (may differ from current user email)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+/// Password reset token
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique // Argon2id hashed token
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+  ipAddress String?   // IP that requested the reset
+  
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+/// Role definition (RBAC)
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique // "platform_admin", "org_admin", "user", "moderator"
+  description String?
+  isSystem    Boolean  @default(false) // System roles cannot be deleted
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  permissions RolePermission[]
+  users       UserRole[]
+  
+  @@index([name])
+}
+
+/// Permission definition (RBAC)
+model Permission {
+  id          String   @id @default(cuid())
+  name        String   @unique // "user:create", "campaign:publish", "contribution:approve"
+  resource    String   // "user", "campaign", "contribution", "organization"
+  action      String   // "create", "read", "update", "delete", "publish", "approve"
+  description String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  roles       RolePermission[]
+  
+  @@unique([resource, action])
+  @@index([resource])
+  @@index([action])
+}
+
+/// Many-to-many: Role <-> Permission
+model RolePermission {
+  id           String   @id @default(cuid())
+  roleId       String
+  permissionId String
+  
+  createdAt    DateTime @default(now())
+  
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+/// Many-to-many: User <-> Role
+model UserRole {
+  id         String   @id @default(cuid())
+  userId     String
+  roleId     String
+  assignedBy String?  // User ID who assigned this role
+  
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime? // Optional role expiration
+  
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+/// Authentication audit log for security events
+model AuthenticationAuditLog {
+  id          String    @id @default(cuid())
+  userId      String?   // Null for failed logins or pre-auth events
+  action      String    // "login", "logout", "register", "password_reset", "email_verify", "token_refresh", "account_lock"
+  result      String    // "success", "failure", "error"
+  details     Json?     // Additional context: { reason, errorCode, metadata }
+  ipAddress   String?
+  userAgent   String?
+  location    String?   // Derived from IP (city, country)
+  createdAt   DateTime  @default(now())
+  
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@index([userId])
+  @@index([action])
+  @@index([result])
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+/// Consent record for GDPR compliance
+model ConsentRecord {
+  id            String    @id @default(cuid())
+  userId        String
+  consentType   String    // "terms_of_service", "privacy_policy", "marketing_emails", "data_processing"
+  consentGiven  Boolean
+  consentText   String?   // Snapshot of the consent text at time of acceptance
+  ipAddress     String?
+  userAgent     String?
+  
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+  
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([consentType])
+  @@index([userId, consentType])
+}
+
+// ============================================================================
+// ORGANIZATIONS
+// ============================================================================
+
+/// Organization - charity, non-profit, or volunteer organization
+model Organization {
+  id                 String               @id @default(cuid())
+  name               String
+  organizationNumber String               @unique
+  type               OrganizationType
+  description        String
+  email              String
+  phone              String?
+  website            String?
+  adminUserId        String
+  verificationStatus VerificationStatus   @default(PENDING)
+  verificationDate   DateTime?
+  status             OrganizationStatus   @default(ACTIVE)
+  city               String?
+  address            String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  deletedAt          DateTime?
+  campaigns          Campaign[]
+
+  @@index([organizationNumber])
+  @@index([verificationStatus])
+  @@index([status])
+}
+
+// ============================================================================
+// CAMPAIGNS & NEEDS
+// ============================================================================
+
+/// Campaign - organized effort to collect contributions
+model Campaign {
+  id             String             @id @default(cuid())
+  organizationId String
+  title          String
+  description    String
+  startDate      DateTime
+  endDate        DateTime
+  status         CampaignStatus     @default(DRAFT)
+  visibility     CampaignVisibility @default(PUBLIC)
+  heroImage      String?
+  region         String?
+  city           String?
+  tags           String[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  deletedAt      DateTime?
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  needs          Need[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([visibility])
+  @@index([startDate])
+  @@index([endDate])
+}
+
+/// Need - specific requirement within a campaign
+model Need {
+  id            String           @id @default(cuid())
+  campaignId    String
+  type          NeedType
+  title         String
+  description   String
+  quantity      Int?
+  unit          String?
+  targetAmount  Decimal?         @db.Decimal(10, 2)
+  currentAmount Decimal          @default(0) @db.Decimal(10, 2)
+  status        NeedStatus       @default(OPEN)
+  priority      Int              @default(1)
+  startDate     DateTime?
+  endDate       DateTime?
+  metadata      Json?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  campaign      Campaign         @relation(fields: [campaignId], references: [id])
+  contributions Contribution[]
+
+  @@index([campaignId])
+  @@index([type])
+  @@index([status])
+}
+
+// ============================================================================
+// CONTRIBUTIONS
+// ============================================================================
+
+/// Contribution - base model for all contribution types
+model Contribution {
+  id            String             @id @default(cuid())
+  userId        String
+  needId        String
+  type          ContributionType
+  status        ContributionStatus @default(PENDING)
+  notes         String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  deletedAt     DateTime?
+  user          User               @relation(fields: [userId], references: [id])
+  need          Need               @relation(fields: [needId], references: [id])
+  money         MoneyContribution?
+  item          ItemContribution?
+  time          TimeContribution?
+  skills        SkillsContribution?
+
+  @@index([userId])
+  @@index([needId])
+  @@index([type])
+  @@index([status])
+}
+
+/// Money contribution details
+model MoneyContribution {
+  id             String        @id @default(cuid())
+  contributionId String        @unique
+  amount         Decimal       @db.Decimal(10, 2)
+  currency       String        @default("NOK")
+  paymentStatus  PaymentStatus @default(PENDING)
+  paymentMethod  String?
+  transactionId  String?
+  paidAt         DateTime?
+  contribution   Contribution  @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+
+  @@index([paymentStatus])
+}
+
+/// Item contribution details
+model ItemContribution {
+  id             String         @id @default(cuid())
+  contributionId String         @unique
+  itemName       String
+  quantity       Int
+  unit           String?
+  condition      ItemCondition?
+  estimatedValue Decimal?       @db.Decimal(10, 2)
+  deliveryMethod DeliveryMethod
+  pickupAddress  String?
+  deliveryDate   DateTime?
+  contribution   Contribution   @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+}
+
+/// Time contribution details
+model TimeContribution {
+  id             String       @id @default(cuid())
+  contributionId String       @unique
+  hours          Decimal      @db.Decimal(5, 2)
+  startDate      DateTime
+  endDate        DateTime?
+  timeCreditId   String?
+  contribution   Contribution @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+  timeCredit     TimeCredit?  @relation(fields: [timeCreditId], references: [id])
+
+  @@index([timeCreditId])
+}
+
+/// Skills contribution details
+model SkillsContribution {
+  id             String       @id @default(cuid())
+  contributionId String       @unique
+  skillName      String
+  hours          Decimal      @db.Decimal(5, 2)
+  startDate      DateTime
+  endDate        DateTime?
+  contribution   Contribution @relation(fields: [contributionId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================================
+// TIME CREDITS & REWARDS
+// ============================================================================
+
+/// Time credit - earned through volunteer work
+model TimeCredit {
+  id                  String            @id @default(cuid())
+  userId              String
+  hoursEarned         Decimal           @db.Decimal(5, 2)
+  hoursSpent          Decimal           @default(0) @db.Decimal(5, 2)
+  balance             Decimal           @db.Decimal(5, 2)
+  earnedDate          DateTime          @default(now())
+  expiryDate          DateTime?
+  status              TimeCreditStatus  @default(ACTIVE)
+  source              String?
+  user                User              @relation(fields: [userId], references: [id])
+  timeContributions   TimeContribution[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([expiryDate])
+}
+
+/// Recognition partner - business offering benefits to volunteers
+model RecognitionPartner {
+  id          String        @id @default(cuid())
+  name        String
+  description String
+  logo        String?
+  website     String?
+  contactName String?
+  contactEmail String?
+  contactPhone String?
+  benefits    Json
+  city        String?
+  address     String?
+  status      PartnerStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([city])
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
 
 enum UserStatus {
   ACTIVE
   INACTIVE
   SUSPENDED
+  DELETED
 }
 
 enum OrganizationType {
-  NON_PROFIT
   CHARITY
+  NON_PROFIT
   COMMUNITY_GROUP
-  SPORTS_CLUB
   SCHOOL
+  RELIGIOUS
   OTHER
 }
 
@@ -46,6 +515,7 @@ enum OrganizationStatus {
 
 enum CampaignStatus {
   DRAFT
+  PUBLISHED
   ACTIVE
   PAUSED
   COMPLETED
@@ -54,38 +524,35 @@ enum CampaignStatus {
 
 enum CampaignVisibility {
   PUBLIC
-  UNLISTED
   PRIVATE
+  UNLISTED
 }
 
 enum NeedType {
   MONEY
-  VOLUNTEER
-  GOODS
-  EQUIPMENT
+  ITEMS
+  TIME
   SKILLS
-  OTHER
 }
 
 enum NeedStatus {
   OPEN
   IN_PROGRESS
   FULFILLED
-  CANCELLED
+  CLOSED
 }
 
 enum ContributionType {
   MONEY
-  VOLUNTEER
-  GOODS
-  EQUIPMENT
+  ITEMS
+  TIME
   SKILLS
-  OTHER
 }
 
 enum ContributionStatus {
   PENDING
-  CONFIRMED
+  APPROVED
+  REJECTED
   COMPLETED
   CANCELLED
 }
@@ -93,536 +560,33 @@ enum ContributionStatus {
 enum PaymentStatus {
   PENDING
   PROCESSING
-  SUCCEEDED
+  COMPLETED
   FAILED
   REFUNDED
 }
 
 enum ItemCondition {
   NEW
+  LIKE_NEW
   GOOD
   FAIR
   POOR
 }
 
 enum DeliveryMethod {
-  DROP_OFF
   PICKUP
-  SHIPPING
-}
-
-enum DeliveryStatus {
-  PENDING
-  SCHEDULED
-  IN_TRANSIT
-  DELIVERED
-  FAILED
-}
-
-enum LoanReturnStatus {
-  PENDING
-  ON_LOAN
-  RETURNED
-  OVERDUE
-  DAMAGED
+  DELIVERY
+  DROP_OFF
 }
 
 enum TimeCreditStatus {
   ACTIVE
-  USED
   EXPIRED
-  CANCELLED
+  REDEEMED
 }
 
 enum PartnerStatus {
   ACTIVE
   INACTIVE
   PENDING
-}
-
-// ============================================================================
-// CORE ENTITIES
-// ============================================================================
-
-/// Platform user - can be contributor, organization admin, or platform admin
-model User {
-  id        String     @id @default(cuid())
-  email     String     @unique
-  name      String
-  phone     String?
-  language  String     @default("no")
-  role      UserRole   @default(USER)
-  status    UserStatus @default(ACTIVE)
-  
-  // Authentication fields
-  passwordHash              String?   // Null for social-only accounts
-  emailVerified             Boolean   @default(false)
-  emailVerificationToken    String?   @unique
-  emailVerificationExpiry   DateTime?
-  
-  passwordResetToken        String?   @unique
-  passwordResetExpiry       DateTime?
-  
-  // Security
-  failedLoginAttempts       Int       @default(0)
-  accountLockedUntil        DateTime?
-  lastLoginAt               DateTime?
-  
-  // OAuth
-  vippsId                   String?   @unique
-  facebookId                String?   @unique
-  googleId                  String?   @unique
-  
-  // Password history (JSON array of hashed passwords)
-  passwordHistory           Json?
-  
-  // Audit fields
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  // Relations
-  contributions Contribution[]
-  timeCredits   TimeCredit[]
-  refreshTokens RefreshToken[]
-  auditLogs     AuditLog[]
-
-  @@index([email])
-  @@index([role])
-  @@index([status])
-}
-
-/// Norwegian organization (non-profit, charity, community group, etc.)
-model Organization {
-  id                  String             @id @default(cuid())
-  name                String
-  description         String?
-  organizationType    OrganizationType
-  
-  // Contact information
-  contactEmail        String
-  contactPhone        String?
-  website             String?
-  
-  // Address
-  address             String?
-  postalCode          String?
-  city                String?
-  
-  // Norwegian organization number (9 digits)
-  organizationNumber  String             @unique
-  
-  // Verification
-  verificationStatus  VerificationStatus @default(PENDING)
-  verificationNote    String?
-  verifiedAt          DateTime?
-  
-  // Stripe Connect (for receiving payments)
-  stripeAccountId     String?            @unique
-  stripeOnboarded     Boolean            @default(false)
-  
-  // Status
-  status              OrganizationStatus @default(ACTIVE)
-  
-  // Audit fields
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
-  deletedAt           DateTime?
-
-  // Relations
-  campaigns           Campaign[]
-  timeCredits         TimeCredit[]
-
-  @@index([organizationNumber])
-  @@index([verificationStatus])
-  @@index([status])
-  @@index([city])
-}
-
-/// Campaign - fundraising, volunteer recruitment, or resource gathering
-model Campaign {
-  id             String             @id @default(cuid())
-  organizationId String
-  
-  // Content
-  title          String
-  description    String
-  story          String?            @db.Text
-  images         Json?              // Array of image URLs
-  
-  // Goals
-  goal           Decimal?           @db.Decimal(10, 2) // Financial goal if monetary
-  
-  // Timeline
-  startDate      DateTime
-  endDate        DateTime?
-  
-  // Location
-  location       String?
-  address        String?
-  postalCode     String?
-  city           String?
-  
-  // Status and visibility
-  status         CampaignStatus     @default(DRAFT)
-  visibility     CampaignVisibility @default(PUBLIC)
-  
-  // Audit fields
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  deletedAt      DateTime?
-
-  // Relations
-  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  needs          Need[]
-
-  @@index([organizationId])
-  @@index([status])
-  @@index([visibility])
-  @@index([city])
-  @@index([startDate])
-  @@index([endDate])
-  @@index([organizationId, status])
-}
-
-/// Need - specific requirement for a campaign
-model Need {
-  id              String         @id @default(cuid())
-  campaignId      String
-  
-  // Content
-  title           String
-  description     String
-  
-  // Type and quantity
-  needType        NeedType
-  quantity        Int?
-  quantityUnit    String?
-  estimatedValue  Decimal?       @db.Decimal(10, 2)
-  
-  // Timeline
-  deadline        DateTime?
-  
-  // Status
-  status          NeedStatus     @default(OPEN)
-  
-  // Audit fields
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  deletedAt       DateTime?
-
-  // Relations
-  campaign        Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contributions   Contribution[]
-
-  @@index([campaignId])
-  @@index([needType])
-  @@index([status])
-  @@index([deadline])
-  @@index([campaignId, status])
-}
-
-// ============================================================================
-// CONTRIBUTIONS (Base + Type-Specific)
-// ============================================================================
-
-/// Base contribution record
-model Contribution {
-  id                     String                  @id @default(cuid())
-  needId                 String
-  userId                 String
-  
-  // Type
-  contributionType       ContributionType
-  
-  // Status
-  status                 ContributionStatus      @default(PENDING)
-  
-  // Notes
-  message                String?
-  
-  // Audit fields
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  deletedAt              DateTime?
-
-  // Relations
-  need                   Need                    @relation(fields: [needId], references: [id], onDelete: Cascade)
-  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Type-specific data (one-to-one optional relations)
-  moneyContribution      MoneyContribution?
-  volunteerContribution  VolunteerContribution?
-  goodsContribution      GoodsContribution?
-  equipmentContribution  EquipmentContribution?
-  skillsContribution     SkillsContribution?
-
-  @@index([needId])
-  @@index([userId])
-  @@index([contributionType])
-  @@index([status])
-  @@index([createdAt(sort: Desc)])
-  @@index([userId, createdAt(sort: Desc)])
-  @@index([needId, contributionType])
-}
-
-/// Money contribution - financial donation
-model MoneyContribution {
-  id                    String        @id @default(cuid())
-  contributionId        String        @unique
-  
-  // Payment details
-  amount                Decimal       @db.Decimal(10, 2)
-  currency              String        @default("NOK")
-  
-  // Stripe payment
-  stripePaymentIntentId String?       @unique
-  paymentStatus         PaymentStatus @default(PENDING)
-  
-  // Receipt
-  receiptUrl            String?
-  receiptIssuedAt       DateTime?
-  
-  // Audit fields
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
-
-  // Relations
-  contribution          Contribution  @relation(fields: [contributionId], references: [id], onDelete: Cascade)
-
-  @@index([stripePaymentIntentId])
-  @@index([paymentStatus])
-}
-
-/// Volunteer contribution - time commitment
-model VolunteerContribution {
-  id             String            @id @default(cuid())
-  contributionId String            @unique
-  
-  // Time commitment
-  hours          Decimal           @db.Decimal(5, 2)
-  date           DateTime
-  startTime      String?
-  endTime        String?
-  
-  // Skills offered
-  skills         String?
-  
-  // Attendance tracking
-  checkedIn      Boolean           @default(false)
-  checkedInAt    DateTime?
-  checkedOut     Boolean           @default(false)
-  checkedOutAt   DateTime?
-  
-  // Audit fields
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-
-  // Relations
-  contribution   Contribution      @relation(fields: [contributionId], references: [id], onDelete: Cascade)
-
-  @@index([date])
-}
-
-/// Goods contribution - physical item donation
-model GoodsContribution {
-  id             String         @id @default(cuid())
-  contributionId String         @unique
-  
-  // Items (JSON array of {name, quantity, description, estimatedValue})
-  items          Json
-  
-  // Condition
-  condition      ItemCondition  @default(GOOD)
-  
-  // Delivery
-  deliveryMethod DeliveryMethod @default(DROP_OFF)
-  deliveryStatus DeliveryStatus @default(PENDING)
-  deliveryDate   DateTime?
-  
-  // Photos
-  photoUrls      Json?          // Array of photo URLs
-  
-  // Audit fields
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-
-  // Relations
-  contribution   Contribution   @relation(fields: [contributionId], references: [id], onDelete: Cascade)
-
-  @@index([deliveryStatus])
-  @@index([deliveryDate])
-}
-
-/// Equipment contribution - temporary item loan
-model EquipmentContribution {
-  id               String            @id @default(cuid())
-  contributionId   String            @unique
-  
-  // Equipment (JSON array of {name, description, estimatedValue, serialNumber})
-  equipment        Json
-  
-  // Loan period
-  loanPeriodStart  DateTime
-  loanPeriodEnd    DateTime
-  
-  // Condition tracking
-  condition        ItemCondition     @default(GOOD)
-  conditionNotes   String?
-  
-  // Return tracking
-  returnStatus     LoanReturnStatus  @default(PENDING)
-  returnedAt       DateTime?
-  returnNotes      String?
-  
-  // Photos
-  photoUrls        Json?             // Array of photo URLs
-  
-  // Audit fields
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-
-  // Relations
-  contribution     Contribution      @relation(fields: [contributionId], references: [id], onDelete: Cascade)
-
-  @@index([loanPeriodEnd])
-  @@index([returnStatus])
-}
-
-/// Skills contribution - professional expertise
-model SkillsContribution {
-  id               String       @id @default(cuid())
-  contributionId   String       @unique
-  
-  // Skill details
-  skillDescription String
-  estimatedHours   Decimal      @db.Decimal(5, 2)
-  
-  // Delivery
-  deliveryDate     DateTime?
-  completedAt      DateTime?
-  
-  // Feedback
-  feedbackRating   Int?
-  feedbackComment  String?
-  
-  // Audit fields
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-
-  // Relations
-  contribution     Contribution @relation(fields: [contributionId], references: [id], onDelete: Cascade)
-
-  @@index([deliveryDate])
-}
-
-// ============================================================================
-// SUPPORTING ENTITIES
-// ============================================================================
-
-/// Time credit - reward for volunteer contributions
-model TimeCredit {
-  id             String           @id @default(cuid())
-  userId         String
-  organizationId String
-  
-  // Credit details
-  hours          Decimal          @db.Decimal(5, 2)
-  description    String
-  
-  // Validity
-  earnedDate     DateTime         @default(now())
-  expiryDate     DateTime?
-  
-  // Status
-  status         TimeCreditStatus @default(ACTIVE)
-  usedAt         DateTime?
-  usedFor        String?
-  
-  // Audit fields
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-
-  // Relations
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([organizationId])
-  @@index([status])
-  @@index([expiryDate])
-  @@index([userId, status])
-}
-
-/// Recognition partner - business offering benefits to volunteers
-model RecognitionPartner {
-  id          String        @id @default(cuid())
-  
-  // Basic info
-  name        String
-  description String
-  logo        String?
-  website     String?
-  
-  // Contact
-  contactName String?
-  contactEmail String?
-  contactPhone String?
-  
-  // Benefits (JSON array of {title, description, discount, termsUrl})
-  benefits    Json
-  
-  // Location
-  city        String?
-  address     String?
-  
-  // Status
-  status      PartnerStatus @default(ACTIVE)
-  
-  // Audit fields
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  deletedAt   DateTime?
-
-  @@index([status])
-  @@index([city])
-}
-
-/// Refresh token for JWT token rotation
-model RefreshToken {
-  id           String    @id @default(cuid())
-  userId       String
-  token        String    @unique // Hashed refresh token
-  expiresAt    DateTime
-  createdAt    DateTime  @default(now())
-  revokedAt    DateTime?
-  replacedBy   String?   // Token ID that replaced this one
-  
-  // Device tracking (optional)
-  userAgent    String?
-  ipAddress    String?
-  
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@index([userId])
-  @@index([token])
-  @@index([expiresAt])
-}
-
-/// Audit log for security and authentication events
-model AuditLog {
-  id          String    @id @default(cuid())
-  userId      String?   // Null for failed logins
-  action      String    // LOGIN, LOGOUT, REGISTER, PASSWORD_RESET, etc.
-  details     Json?     // Additional context
-  ipAddress   String?
-  userAgent   String?
-  success     Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  
-  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  
-  @@index([userId])
-  @@index([action])
-  @@index([createdAt(sort: Desc)])
 }

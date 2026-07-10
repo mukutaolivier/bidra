@@ -1,10 +1,14 @@
 import { Injectable, UnauthorizedException, ConflictException, BadRequestException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import * as bcrypt from "bcrypt";
-import * as crypto from "crypto";
-import { prisma, UserRepository, RefreshTokenRepository, AuditLogRepository } from "@bidra/database";
-import { UserRole, UserStatus } from "@bidra/types";
+import * as argon2 from "argon2";
+import { randomBytes } from "crypto";
+import {
+  UserRepository,
+  RefreshTokenRepository,
+  AuditLogRepository,
+} from "@bidra/database";
+import { UserRole } from "@bidra/types";
 
 @Injectable()
 export class AuthService {
@@ -445,17 +449,48 @@ export class AuthService {
   }
 
   /**
-   * Hash password using bcrypt
+   * Hash a password using Argon2id
    */
   private async hashPassword(password: string): Promise<string> {
-    return bcrypt.hash(password, this.saltRounds);
+    return argon2.hash(password, {
+      type: argon2.argon2id,
+      memoryCost: 19456, // 19 MiB
+      timeCost: 2,
+      parallelism: 1,
+    });
   }
 
   /**
-   * Verify password against hash
+   * Verify a password against its hash using Argon2id
    */
-  private async verifyPassword(password: string, hash: string): Promise<boolean> {
-    return bcrypt.compare(password, hash);
+  private async verifyPassword(
+    password: string,
+    hash: string
+  ): Promise<boolean> {
+    try {
+      return await argon2.verify(hash, password);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Generate a secure random token
+   */
+  private generateToken(length: number = 32): string {
+    return randomBytes(length).toString("hex");
+  }
+
+  /**
+   * Hash a refresh token for storage
+   */
+  private async hashRefreshToken(token: string): Promise<string> {
+    return argon2.hash(token, {
+      type: argon2.argon2id,
+      memoryCost: 19456,
+      timeCost: 2,
+      parallelism: 1,
+    });
   }
 
   /**
@@ -463,13 +498,6 @@ export class AuthService {
    */
   private async hashToken(token: string): Promise<string> {
     return crypto.createHash("sha256").update(token).digest("hex");
-  }
-
-  /**
-   * Generate random token for email verification and password reset
-   */
-  private generateToken(): string {
-    return crypto.randomBytes(32).toString("hex");
   }
 
   /**
