@@ -154,6 +154,28 @@ model User {
   role      UserRole   @default(USER)
   status    UserStatus @default(ACTIVE)
   
+  // Authentication fields
+  passwordHash              String?   // Null for social-only accounts
+  emailVerified             Boolean   @default(false)
+  emailVerificationToken    String?   @unique
+  emailVerificationExpiry   DateTime?
+  
+  passwordResetToken        String?   @unique
+  passwordResetExpiry       DateTime?
+  
+  // Security
+  failedLoginAttempts       Int       @default(0)
+  accountLockedUntil        DateTime?
+  lastLoginAt               DateTime?
+  
+  // OAuth
+  vippsId                   String?   @unique
+  facebookId                String?   @unique
+  googleId                  String?   @unique
+  
+  // Password history (JSON array of hashed passwords)
+  passwordHistory           Json?
+  
   // Audit fields
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -162,6 +184,8 @@ model User {
   // Relations
   contributions Contribution[]
   timeCredits   TimeCredit[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
 
   @@index([email])
   @@index([role])
@@ -562,4 +586,43 @@ model RecognitionPartner {
 
   @@index([status])
   @@index([city])
+}
+
+/// Refresh token for JWT token rotation
+model RefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  token        String    @unique // Hashed refresh token
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  replacedBy   String?   // Token ID that replaced this one
+  
+  // Device tracking (optional)
+  userAgent    String?
+  ipAddress    String?
+  
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+/// Audit log for security and authentication events
+model AuditLog {
+  id          String    @id @default(cuid())
+  userId      String?   // Null for failed logins
+  action      String    // LOGIN, LOGOUT, REGISTER, PASSWORD_RESET, etc.
+  details     Json?     // Additional context
+  ipAddress   String?
+  userAgent   String?
+  success     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
 }
