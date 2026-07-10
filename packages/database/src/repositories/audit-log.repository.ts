@@ -11,6 +11,22 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
   }
 
   /**
+   * Find all audit logs with pagination
+   */
+  async findAll(options?: FindAllOptions): Promise<AuditLog[]> {
+    const { skip, take } = this.applyPagination(options?.pagination);
+
+    return this.prisma.auditLog.findMany({
+      skip,
+      take,
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: true,
+      },
+    });
+  }
+
+  /**
    * Find audit log by ID
    */
   async findById(id: string): Promise<AuditLog | null> {
@@ -139,6 +155,43 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
       userAgent,
       details: details || null,
     });
+  }
+
+  /**
+   * Update audit log (not recommended - audit logs should be immutable)
+   */
+  async update(id: string, data: Partial<AuditLog>): Promise<AuditLog> {
+    const existing = await this.findById(id);
+    if (!existing) {
+      this.throwNotFound(id);
+    }
+
+    return this.prisma.auditLog.update({
+      where: { id },
+      data,
+    });
+  }
+
+  /**
+   * Hard delete audit log
+   */
+  async delete(id: string): Promise<AuditLog> {
+    const existing = await this.findById(id);
+    if (!existing) {
+      this.throwNotFound(id);
+    }
+
+    return this.prisma.auditLog.delete({
+      where: { id },
+    });
+  }
+
+  /**
+   * Soft delete not applicable for AuditLog (no deletedAt field)
+   * Use hard delete or retention policy instead
+   */
+  async softDelete(id: string): Promise<AuditLog> {
+    return this.delete(id);
   }
 
   /**

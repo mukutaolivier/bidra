@@ -1,6 +1,6 @@
 import { PrismaClient, RefreshToken } from "@prisma/client";
 import { BaseRepository } from "./base.repository";
-import { FindAllOptions } from "../types/repository.types";
+import { FindAllOptions, PaginatedResult } from "../types/repository.types";
 
 /**
  * Repository for RefreshToken entity
@@ -8,6 +8,22 @@ import { FindAllOptions } from "../types/repository.types";
 export class RefreshTokenRepository extends BaseRepository<RefreshToken> {
   constructor(prisma: PrismaClient) {
     super(prisma, "RefreshToken");
+  }
+
+  /**
+   * Find all refresh tokens with pagination
+   */
+  async findAll(options?: FindAllOptions): Promise<RefreshToken[]> {
+    const { skip, take } = this.applyPagination(options?.pagination);
+
+    return this.prisma.refreshToken.findMany({
+      skip,
+      take,
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: true,
+      },
+    });
   }
 
   /**
@@ -153,5 +169,45 @@ export class RefreshTokenRepository extends BaseRepository<RefreshToken> {
     });
 
     return result.count;
+  }
+
+  /**
+   * Update refresh token (not commonly used - tokens are typically immutable)
+   */
+  async update(
+    id: string,
+    data: Partial<RefreshToken>
+  ): Promise<RefreshToken> {
+    const existing = await this.findById(id);
+    if (!existing) {
+      this.throwNotFound(id);
+    }
+
+    return this.prisma.refreshToken.update({
+      where: { id },
+      data,
+    });
+  }
+
+  /**
+   * Hard delete refresh token
+   */
+  async delete(id: string): Promise<RefreshToken> {
+    const existing = await this.findById(id);
+    if (!existing) {
+      this.throwNotFound(id);
+    }
+
+    return this.prisma.refreshToken.delete({
+      where: { id },
+    });
+  }
+
+  /**
+   * Soft delete not applicable for RefreshToken (no deletedAt field)
+   * Tokens are revoked instead
+   */
+  async softDelete(id: string): Promise<RefreshToken> {
+    return this.revoke(id);
   }
 }
