@@ -8,7 +8,6 @@ import {
   ContributionType,
   ContributionStatus,
   PaymentStatus,
-  UserRole,
   UserStatus,
   OrganizationType,
   VerificationStatus,
@@ -33,6 +32,7 @@ describe("ContributionRepository", () => {
   let testOrg: any;
   let testCampaign: any;
   let testNeed: any;
+  let testUserRole: any;
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -45,23 +45,42 @@ describe("ContributionRepository", () => {
   beforeEach(async () => {
     // Clear all data
     await prisma.skillsContribution.deleteMany();
-    await prisma.equipmentContribution.deleteMany();
-    await prisma.goodsContribution.deleteMany();
-    await prisma.volunteerContribution.deleteMany();
+    await prisma.timeContribution.deleteMany();
+    await prisma.itemContribution.deleteMany();
     await prisma.moneyContribution.deleteMany();
     await prisma.contribution.deleteMany();
     await prisma.need.deleteMany();
     await prisma.campaign.deleteMany();
     await prisma.organization.deleteMany();
+    await prisma.userRole.deleteMany();
+    await prisma.role.deleteMany();
     await prisma.user.deleteMany();
 
-    // Create test data
-    testUser = await userRepo.create({
-      email: "contributor@test.no",
-      name: "Test Contributor",
-      language: "no",
-      role: UserRole.USER,
-      status: UserStatus.ACTIVE,
+    // Create test role
+    testUserRole = await prisma.role.create({
+      data: {
+        name: "user",
+        description: "Test user role",
+        isSystem: true,
+      },
+    });
+
+    // Create test user
+    testUser = await prisma.user.create({
+      data: {
+        email: "contributor@test.no",
+        name: "Test Contributor",
+        language: "no",
+        status: UserStatus.ACTIVE,
+        passwordHash: "test_hash",
+        emailVerified: true,
+        failedLoginAttempts: 0,
+        roles: {
+          create: {
+            roleId: testUserRole.id,
+          },
+        },
+      },
     });
 
     testOrg = await orgRepo.create({
@@ -97,123 +116,122 @@ describe("ContributionRepository", () => {
 
   describe("createMoneyContribution", () => {
     it("should create a money contribution with payment details", async () => {
-      const contribution = await contributionRepo.createMoneyContribution(
-        {
-          needId: testNeed.id,
-          userId: testUser.id,
-          contributionType: ContributionType.MONEY,
-          status: ContributionStatus.PENDING,
+      const contribution = await contributionRepo.create({
+        needId: testNeed.id,
+        userId: testUser.id,
+        type: ContributionType.MONEY,
+        status: ContributionStatus.PENDING,
+        money: {
+          create: {
+            amount: 1000,
+            currency: "NOK",
+            paymentStatus: PaymentStatus.PENDING,
+          },
         },
-        {
-          amount: 1000,
-          currency: "NOK",
-          paymentStatus: PaymentStatus.PENDING,
-        }
-      );
+      });
 
-      expect(contribution.contributionType).toBe(ContributionType.MONEY);
-      expect(contribution.moneyContribution).toBeDefined();
-      expect(contribution.moneyContribution?.amount).toBe(1000);
+      expect(contribution.type).toBe(ContributionType.MONEY);
+      expect(contribution.money).toBeDefined();
+      expect(contribution.money?.amount).toBe(1000);
     });
   });
 
-  describe("createVolunteerContribution", () => {
-    it("should create a volunteer contribution", async () => {
-      const volunteerNeed = await needRepo.create({
+  describe("createTimeContribution", () => {
+    it("should create a time contribution", async () => {
+      const timeNeed = await needRepo.create({
         campaignId: testCampaign.id,
-        title: "Volunteer Need",
+        title: "Time Need",
         description: "Need volunteers",
-        type: NeedType.VOLUNTEER,
+        type: NeedType.TIME,
         targetQuantity: 10,
         status: NeedStatus.OPEN,
       });
 
-      const contribution = await contributionRepo.createVolunteerContribution(
-        {
-          needId: volunteerNeed.id,
-          userId: testUser.id,
-          contributionType: ContributionType.VOLUNTEER,
-          status: ContributionStatus.CONFIRMED,
+      const contribution = await contributionRepo.create({
+        needId: timeNeed.id,
+        userId: testUser.id,
+        type: ContributionType.TIME,
+        status: ContributionStatus.CONFIRMED,
+        time: {
+          create: {
+            hours: 4,
+            date: new Date("2026-08-01"),
+            startTime: "10:00",
+            endTime: "14:00",
+            checkedIn: false,
+          },
         },
-        {
-          hours: 4,
-          volunteerDate: new Date("2026-08-01"),
-          startTime: "10:00",
-          endTime: "14:00",
-          skills: "Event planning",
-          checkedIn: false,
-        }
-      );
+      });
 
-      expect(contribution.contributionType).toBe(ContributionType.VOLUNTEER);
-      expect(contribution.volunteerContribution).toBeDefined();
-      expect(contribution.volunteerContribution?.hours).toBe(4);
+      expect(contribution.type).toBe(ContributionType.TIME);
+      expect(contribution.time).toBeDefined();
+      expect(contribution.time?.hours).toBe(4);
     });
   });
 
-  describe("createGoodsContribution", () => {
-    it("should create a goods contribution", async () => {
-      const goodsNeed = await needRepo.create({
+  describe("createItemContribution", () => {
+    it("should create an item contribution", async () => {
+      const itemNeed = await needRepo.create({
         campaignId: testCampaign.id,
-        title: "Goods Need",
+        title: "Item Need",
         description: "Need items",
-        type: NeedType.GOODS,
+        type: NeedType.ITEMS,
         targetQuantity: 20,
         status: NeedStatus.OPEN,
       });
 
-      const contribution = await contributionRepo.createGoodsContribution(
-        {
-          needId: goodsNeed.id,
-          userId: testUser.id,
-          contributionType: ContributionType.GOODS,
-          status: ContributionStatus.PENDING,
+      const contribution = await contributionRepo.create({
+        needId: itemNeed.id,
+        userId: testUser.id,
+        type: ContributionType.ITEMS,
+        status: ContributionStatus.PENDING,
+        items: {
+          create: {
+            items: [
+              { name: "Item 1", quantity: 2, condition: "NEW" },
+              { name: "Item 2", quantity: 5, condition: "GOOD" },
+            ],
+            condition: ItemCondition.GOOD,
+            deliveryMethod: DeliveryMethod.DROP_OFF,
+          },
         },
-        {
-          items: [
-            { name: "Item 1", quantity: 2, condition: "NEW" },
-            { name: "Item 2", quantity: 5, condition: "GOOD" },
-          ],
-          condition: ItemCondition.GOOD,
-          deliveryMethod: DeliveryMethod.DROP_OFF,
-        }
-      );
+      });
 
-      expect(contribution.contributionType).toBe(ContributionType.GOODS);
-      expect(contribution.goodsContribution).toBeDefined();
-      expect(contribution.goodsContribution?.items).toHaveLength(2);
+      expect(contribution.type).toBe(ContributionType.ITEMS);
+      expect(contribution.items).toBeDefined();
+      expect(contribution.items?.items).toHaveLength(2);
     });
   });
 
   describe("findByUser", () => {
     it("should find all contributions by user", async () => {
-      await contributionRepo.createMoneyContribution(
-        {
-          needId: testNeed.id,
-          userId: testUser.id,
-          contributionType: ContributionType.MONEY,
-          status: ContributionStatus.CONFIRMED,
+      await contributionRepo.create({
+        needId: testNeed.id,
+        userId: testUser.id,
+        type: ContributionType.MONEY,
+        status: ContributionStatus.CONFIRMED,
+        money: {
+          create: {
+            amount: 500,
+            currency: "NOK",
+            paymentStatus: PaymentStatus.COMPLETED,
+          },
         },
-        {
-          amount: 500,
-          currency: "NOK",
-          paymentStatus: PaymentStatus.COMPLETED,
-        }
-      );
+      });
 
-      await contributionRepo.createMoneyContribution(
-        {
-          needId: testNeed.id,
-          userId: testUser.id,
-          contributionType: ContributionType.MONEY,
-          status: ContributionStatus.CONFIRMED,
+      await contributionRepo.create({
+        needId: testNeed.id,
+        userId: testUser.id,
+        type: ContributionType.MONEY,
+        status: ContributionStatus.CONFIRMED,
+        money: {
+          create: {
+            amount: 1000,
+            currency: "NOK",
+            paymentStatus: PaymentStatus.COMPLETED,
+          },
         },
-        {
-          amount: 1000,
-          currency: "NOK",
-          paymentStatus: PaymentStatus.COMPLETED,
-        }
-      );
+      });
 
       const result = await contributionRepo.findByUser(testUser.id, {
         page: 1,
@@ -227,19 +245,19 @@ describe("ContributionRepository", () => {
 
   describe("findByCampaign", () => {
     it("should find all contributions for a campaign", async () => {
-      await contributionRepo.createMoneyContribution(
-        {
-          needId: testNeed.id,
-          userId: testUser.id,
-          contributionType: ContributionType.MONEY,
-          status: ContributionStatus.CONFIRMED,
+      await contributionRepo.create({
+        needId: testNeed.id,
+        userId: testUser.id,
+        type: ContributionType.MONEY,
+        status: ContributionStatus.CONFIRMED,
+        money: {
+          create: {
+            amount: 500,
+            currency: "NOK",
+            paymentStatus: PaymentStatus.COMPLETED,
+          },
         },
-        {
-          amount: 500,
-          currency: "NOK",
-          paymentStatus: PaymentStatus.COMPLETED,
-        }
-      );
+      });
 
       const result = await contributionRepo.findByCampaign(testCampaign.id, {
         page: 1,
@@ -253,19 +271,19 @@ describe("ContributionRepository", () => {
 
   describe("updateStatus", () => {
     it("should update contribution status", async () => {
-      const contribution = await contributionRepo.createMoneyContribution(
-        {
-          needId: testNeed.id,
-          userId: testUser.id,
-          contributionType: ContributionType.MONEY,
-          status: ContributionStatus.PENDING,
+      const contribution = await contributionRepo.create({
+        needId: testNeed.id,
+        userId: testUser.id,
+        type: ContributionType.MONEY,
+        status: ContributionStatus.PENDING,
+        money: {
+          create: {
+            amount: 1000,
+            currency: "NOK",
+            paymentStatus: PaymentStatus.PENDING,
+          },
         },
-        {
-          amount: 1000,
-          currency: "NOK",
-          paymentStatus: PaymentStatus.PENDING,
-        }
-      );
+      });
 
       const updated = await contributionRepo.updateStatus(
         contribution.id,
