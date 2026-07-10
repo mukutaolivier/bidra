@@ -1,4 +1,4 @@
-import { PrismaClient, User, UserRole, UserStatus } from "@prisma/client";
+import { PrismaClient, User, UserStatus } from "@prisma/client";
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
 
@@ -11,11 +11,18 @@ export class UserRepository extends BaseRepository<User> {
   }
 
   /**
-   * Find user by ID
+   * Find user by ID with roles
    */
   async findById(id: string): Promise<User | null> {
     return this.prisma.user.findUnique({
       where: { id },
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
     });
   }
 
@@ -25,6 +32,13 @@ export class UserRepository extends BaseRepository<User> {
   async findByEmail(email: string): Promise<User | null> {
     return this.prisma.user.findUnique({
       where: { email },
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
     });
   }
 
@@ -47,15 +61,28 @@ export class UserRepository extends BaseRepository<User> {
   }
 
   /**
-   * Find users by role
+   * Find users by role name
    */
-  async findByRole(role: UserRole, options?: FindAllOptions): Promise<User[]> {
+  async findByRoleName(roleName: string, options?: FindAllOptions): Promise<User[]> {
     const { skip, take } = this.applyPagination(options?.pagination);
 
     return this.prisma.user.findMany({
       where: {
-        role,
+        roles: {
+          some: {
+            role: {
+              name: roleName,
+            },
+          },
+        },
         deletedAt: options?.includeDeleted ? undefined : null,
+      },
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
       },
       skip,
       take,
@@ -90,6 +117,13 @@ export class UserRepository extends BaseRepository<User> {
       where: {
         deletedAt: options?.includeDeleted ? undefined : null,
       },
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
       skip,
       take,
       orderBy: { createdAt: "desc" },
@@ -102,6 +136,13 @@ export class UserRepository extends BaseRepository<User> {
   async create(data: Omit<User, "id" | "createdAt" | "updatedAt">): Promise<User> {
     return this.prisma.user.create({
       data,
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
     });
   }
 
@@ -120,6 +161,13 @@ export class UserRepository extends BaseRepository<User> {
     return this.prisma.user.update({
       where: { id },
       data,
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
     });
   }
 
@@ -164,6 +212,38 @@ export class UserRepository extends BaseRepository<User> {
     return this.prisma.user.update({
       where: { id },
       data: { status },
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+    });
+  }
+
+  /**
+   * Assign role to user
+   */
+  async assignRole(userId: string, roleId: string, assignedBy?: string): Promise<void> {
+    await this.prisma.userRole.create({
+      data: {
+        userId,
+        roleId,
+        assignedBy,
+      },
+    });
+  }
+
+  /**
+   * Remove role from user
+   */
+  async removeRole(userId: string, roleId: string): Promise<void> {
+    await this.prisma.userRole.deleteMany({
+      where: {
+        userId,
+        roleId,
+      },
     });
   }
 }

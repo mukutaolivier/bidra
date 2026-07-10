@@ -1,22 +1,22 @@
-import { PrismaClient, AuditLog } from "@prisma/client";
+import { PrismaClient, AuthenticationAuditLog } from "@prisma/client";
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
 
 /**
- * Repository for AuditLog entity
+ * Repository for AuthenticationAuditLog entity
  */
-export class AuditLogRepository extends BaseRepository<AuditLog> {
+export class AuditLogRepository extends BaseRepository<AuthenticationAuditLog> {
   constructor(prisma: PrismaClient) {
-    super(prisma, "AuditLog");
+    super(prisma, "AuthenticationAuditLog");
   }
 
   /**
    * Find all audit logs with pagination
    */
-  async findAll(options?: FindAllOptions): Promise<AuditLog[]> {
+  async findAll(options?: FindAllOptions): Promise<AuthenticationAuditLog[]> {
     const { skip, take } = this.applyPagination(options?.pagination);
 
-    return this.prisma.auditLog.findMany({
+    return this.prisma.authenticationAuditLog.findMany({
       skip,
       take,
       orderBy: { createdAt: "desc" },
@@ -29,8 +29,8 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
   /**
    * Find audit log by ID
    */
-  async findById(id: string): Promise<AuditLog | null> {
-    return this.prisma.auditLog.findUnique({
+  async findById(id: string): Promise<AuthenticationAuditLog | null> {
+    return this.prisma.authenticationAuditLog.findUnique({
       where: { id },
       include: {
         user: true,
@@ -44,10 +44,10 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
   async findByUserId(
     userId: string,
     options?: FindAllOptions
-  ): Promise<AuditLog[]> {
+  ): Promise<AuthenticationAuditLog[]> {
     const { skip, take } = this.applyPagination(options?.pagination);
 
-    return this.prisma.auditLog.findMany({
+    return this.prisma.authenticationAuditLog.findMany({
       where: { userId },
       skip,
       take,
@@ -61,10 +61,10 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
   async findByAction(
     action: string,
     options?: FindAllOptions
-  ): Promise<AuditLog[]> {
+  ): Promise<AuthenticationAuditLog[]> {
     const { skip, take } = this.applyPagination(options?.pagination);
 
-    return this.prisma.auditLog.findMany({
+    return this.prisma.authenticationAuditLog.findMany({
       where: { action },
       skip,
       take,
@@ -73,21 +73,18 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
   }
 
   /**
-   * Find failed login attempts by IP address
+   * Find audit logs by result
    */
-  async findFailedLoginsByIp(
-    ipAddress: string,
-    since: Date
-  ): Promise<AuditLog[]> {
-    return this.prisma.auditLog.findMany({
-      where: {
-        action: "LOGIN",
-        success: false,
-        ipAddress,
-        createdAt: {
-          gte: since,
-        },
-      },
+  async findByResult(
+    result: string,
+    options?: FindAllOptions
+  ): Promise<AuthenticationAuditLog[]> {
+    const { skip, take } = this.applyPagination(options?.pagination);
+
+    return this.prisma.authenticationAuditLog.findMany({
+      where: { result },
+      skip,
+      take,
       orderBy: { createdAt: "desc" },
     });
   }
@@ -97,17 +94,18 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
    */
   async findRecentSecurityEvents(
     limit: number = 100
-  ): Promise<AuditLog[]> {
-    return this.prisma.auditLog.findMany({
+  ): Promise<AuthenticationAuditLog[]> {
+    return this.prisma.authenticationAuditLog.findMany({
       where: {
         action: {
           in: [
-            "LOGIN",
-            "LOGOUT",
-            "REGISTER",
-            "PASSWORD_RESET",
-            "EMAIL_VERIFICATION",
-            "ACCOUNT_LOCKED",
+            "login",
+            "logout",
+            "register",
+            "password_reset",
+            "email_verify",
+            "token_refresh",
+            "account_lock",
           ],
         },
       },
@@ -129,9 +127,9 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
    * Create audit log entry
    */
   async create(
-    data: Omit<AuditLog, "id" | "createdAt">
-  ): Promise<AuditLog> {
-    return this.prisma.auditLog.create({
+    data: Omit<AuthenticationAuditLog, "id" | "createdAt">
+  ): Promise<AuthenticationAuditLog> {
+    return this.prisma.authenticationAuditLog.create({
       data,
     });
   }
@@ -142,15 +140,15 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
   async logAuthEvent(
     action: string,
     userId: string | null,
-    success: boolean,
+    result: "success" | "failure" | "error",
     ipAddress?: string,
     userAgent?: string,
     details?: Record<string, any>
-  ): Promise<AuditLog> {
+  ): Promise<AuthenticationAuditLog> {
     return this.create({
       action,
       userId,
-      success,
+      result,
       ipAddress,
       userAgent,
       details: details || null,
@@ -160,13 +158,13 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
   /**
    * Update audit log (not recommended - audit logs should be immutable)
    */
-  async update(id: string, data: Partial<AuditLog>): Promise<AuditLog> {
+  async update(id: string, data: Partial<AuthenticationAuditLog>): Promise<AuthenticationAuditLog> {
     const existing = await this.findById(id);
     if (!existing) {
       this.throwNotFound(id);
     }
 
-    return this.prisma.auditLog.update({
+    return this.prisma.authenticationAuditLog.update({
       where: { id },
       data,
     });
@@ -175,22 +173,22 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
   /**
    * Hard delete audit log
    */
-  async delete(id: string): Promise<AuditLog> {
+  async delete(id: string): Promise<AuthenticationAuditLog> {
     const existing = await this.findById(id);
     if (!existing) {
       this.throwNotFound(id);
     }
 
-    return this.prisma.auditLog.delete({
+    return this.prisma.authenticationAuditLog.delete({
       where: { id },
     });
   }
 
   /**
-   * Soft delete not applicable for AuditLog (no deletedAt field)
+   * Soft delete not applicable for AuthenticationAuditLog (no deletedAt field)
    * Use hard delete or retention policy instead
    */
-  async softDelete(id: string): Promise<AuditLog> {
+  async softDelete(id: string): Promise<AuthenticationAuditLog> {
     return this.delete(id);
   }
 
@@ -198,7 +196,7 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
    * Delete old audit logs (data retention)
    */
   async deleteOlderThan(date: Date): Promise<number> {
-    const result = await this.prisma.auditLog.deleteMany({
+    const result = await this.prisma.authenticationAuditLog.deleteMany({
       where: {
         createdAt: {
           lt: date,
