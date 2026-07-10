@@ -22,129 +22,193 @@ import {
   TimeCreditStatus,
   PartnerStatus,
 } from "@prisma/client";
+// Note: bcrypt will be installed in next phase, using placeholder hash for now
+// const bcrypt = require('bcrypt');
 
 const prisma = new PrismaClient();
 
-async function main() {
-  console.log("Starting database seed...");
+// Placeholder password hash for "Password123!" - will be replaced when bcrypt is installed
+const TEST_PASSWORD_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzpLaEm3Eu";
 
-  // Clear existing data (in reverse order of dependencies)
+async function main() {
+  console.log("🌱 Starting database seed...");
+
+  // Clean existing data (in reverse order of dependencies)
+  await prisma.timeCredit.deleteMany();
   await prisma.skillsContribution.deleteMany();
-  await prisma.equipmentContribution.deleteMany();
-  await prisma.goodsContribution.deleteMany();
-  await prisma.volunteerContribution.deleteMany();
+  await prisma.timeContribution.deleteMany();
+  await prisma.itemContribution.deleteMany();
   await prisma.moneyContribution.deleteMany();
   await prisma.contribution.deleteMany();
-  await prisma.timeCredit.deleteMany();
   await prisma.need.deleteMany();
   await prisma.campaign.deleteMany();
+  await prisma.auditLog.deleteMany();
+  await prisma.refreshToken.deleteMany();
   await prisma.organization.deleteMany();
-  await prisma.recognitionPartner.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.recognitionPartner.deleteMany();
 
-  console.log("Cleared existing data");
+  console.log("✅ Cleaned existing data");
 
-  // Create Users
+  // Create Users with authentication fields
   const users = await Promise.all([
     prisma.user.create({
       data: {
-        email: "admin@bidra.no",
-        name: "Platform Administrator",
-        phone: "+4741234567",
+        email: "contributor@example.com",
+        name: "Lars Olsen",
+        phone: "+4798765432",
         language: "no",
-        role: UserRole.PLATFORM_ADMIN,
+        role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: TEST_PASSWORD_HASH,
+        emailVerified: true,
+        lastLoginAt: new Date(),
       },
     }),
     prisma.user.create({
       data: {
-        email: "org.admin@reddebarna.no",
-        name: "Kari Nordmann",
-        phone: "+4741234568",
+        email: "orgadmin@example.com",
+        name: "Kari Hansen",
+        phone: "+4787654321",
         language: "no",
         role: UserRole.ORG_ADMIN,
         status: UserStatus.ACTIVE,
+        passwordHash: TEST_PASSWORD_HASH,
+        emailVerified: true,
+        lastLoginAt: new Date(Date.now() - 86400000), // 1 day ago
       },
     }),
     prisma.user.create({
       data: {
-        email: "contributor1@example.no",
-        name: "Ole Hansen",
-        phone: "+4741234569",
+        email: "admin@example.com",
+        name: "Erik Johansen",
+        phone: "+4776543210",
         language: "no",
-        role: UserRole.USER,
+        role: UserRole.PLATFORM_ADMIN,
         status: UserStatus.ACTIVE,
+        passwordHash: TEST_PASSWORD_HASH,
+        emailVerified: true,
+        lastLoginAt: new Date(Date.now() - 3600000), // 1 hour ago
       },
     }),
     prisma.user.create({
       data: {
-        email: "contributor2@example.no",
-        name: "Ingrid Johansen",
+        email: "unverified@example.com",
+        name: "Unverified User",
+        phone: "+4765432109",
         language: "no",
         role: UserRole.USER,
         status: UserStatus.ACTIVE,
+        passwordHash: TEST_PASSWORD_HASH,
+        emailVerified: false,
+        emailVerificationToken: "verify_token_12345",
+        emailVerificationExpiry: new Date(Date.now() + 86400000), // 24 hours from now
       },
     }),
   ]);
 
-  console.log(`Created ${users.length} users`);
+  console.log("✅ Created users with authentication data");
+
+  // Create sample refresh tokens for active users
+  await Promise.all([
+    prisma.refreshToken.create({
+      data: {
+        userId: users[0].id,
+        token: "hashed_refresh_token_1",
+        expiresAt: new Date(Date.now() + 7 * 86400000), // 7 days
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        ipAddress: "192.168.1.100",
+      },
+    }),
+    prisma.refreshToken.create({
+      data: {
+        userId: users[1].id,
+        token: "hashed_refresh_token_2",
+        expiresAt: new Date(Date.now() + 7 * 86400000),
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        ipAddress: "192.168.1.101",
+      },
+    }),
+  ]);
+
+  console.log("✅ Created refresh tokens");
+
+  // Create sample audit logs
+  await Promise.all([
+    prisma.auditLog.create({
+      data: {
+        userId: users[0].id,
+        action: "LOGIN",
+        success: true,
+        ipAddress: "192.168.1.100",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        details: { method: "email_password" },
+      },
+    }),
+    prisma.auditLog.create({
+      data: {
+        userId: users[1].id,
+        action: "LOGIN",
+        success: true,
+        ipAddress: "192.168.1.101",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        details: { method: "email_password" },
+      },
+    }),
+    prisma.auditLog.create({
+      data: {
+        userId: null,
+        action: "LOGIN",
+        success: false,
+        ipAddress: "192.168.1.200",
+        userAgent: "Mozilla/5.0",
+        details: { reason: "invalid_credentials", email: "wrong@example.com" },
+        createdAt: new Date(Date.now() - 3600000),
+      },
+    }),
+  ]);
+
+  console.log("✅ Created audit logs");
 
   // Create Organizations
   const organizations = await Promise.all([
     prisma.organization.create({
       data: {
-        name: "Redd Barna Norge",
-        organizationNumber: "940958708",
+        name: "Oslo Røde Kors",
+        organizationNumber: "970102287",
         type: OrganizationType.CHARITY,
-        description: "Redd Barna jobber for barns rettigheter i Norge og over hele verden.",
-        website: "https://www.reddbarna.no",
-        email: "info@reddbarna.no",
-        phone: "+4722995000",
-        address: "Brynsalléen 12",
-        city: "Oslo",
-        postalCode: "0667",
+        description: "Oslo avdeling av Røde Kors. Vi jobber med humanitært arbeid i lokalsamfunnet.",
+        email: "oslo@redcross.no",
+        phone: "+4722054000",
+        website: "https://www.rodekors.no/oslo",
+        adminUserId: users[1].id,
         verificationStatus: VerificationStatus.VERIFIED,
         verificationDate: new Date(),
         status: OrganizationStatus.ACTIVE,
-        stripeAccountId: "acct_test_reddebarna",
+        city: "Oslo",
+        address: "Hausmanns gate 7, 0186 Oslo",
       },
     }),
     prisma.organization.create({
       data: {
-        name: "Norsk Folkehjelp",
-        organizationNumber: "971277882",
-        type: OrganizationType.CHARITY,
-        description: "Norsk Folkehjelp arbeider for solidaritet og en mer rettferdig fordeling av makt og ressurser.",
-        website: "https://www.folkehjelp.no",
-        email: "post@folkehjelp.no",
-        phone: "+4722033100",
-        address: "Stortorvet 10",
-        city: "Oslo",
-        postalCode: "0155",
+        name: "Bergen Dyrebeskyttelse",
+        organizationNumber: "970445790",
+        type: OrganizationType.NON_PROFIT,
+        description: "Dyrevelferd og dyrebeskyttelse i Bergen og omegn.",
+        email: "post@bergendyrebeskyttelse.no",
+        phone: "+4755327000",
+        website: "https://www.bergendyrebeskyttelse.no",
+        adminUserId: users[1].id,
         verificationStatus: VerificationStatus.VERIFIED,
         verificationDate: new Date(),
         status: OrganizationStatus.ACTIVE,
-        stripeAccountId: "acct_test_folkehjelp",
-      },
-    }),
-    prisma.organization.create({
-      data: {
-        name: "Lokal Idrettsklubb",
-        organizationNumber: "123456789",
-        type: OrganizationType.SPORTS,
-        description: "Lokalt idrettslag som fremmer fysisk aktivitet for barn og unge.",
-        email: "kontakt@lokalidrett.no",
-        phone: "+4741234570",
-        address: "Idrettsveien 5",
         city: "Bergen",
-        postalCode: "5003",
-        verificationStatus: VerificationStatus.PENDING,
-        status: OrganizationStatus.ACTIVE,
+        address: "Hesthaugveien 2, 5231 Paradis",
       },
     }),
   ]);
 
-  console.log(`Created ${organizations.length} organizations`);
+  console.log("✅ Created organizations");
 
   // Create Campaigns
   const campaigns = await Promise.all([
@@ -519,12 +583,12 @@ async function main() {
 
   console.log(`Created ${partners.length} recognition partners`);
 
-  console.log("Database seeding completed successfully!");
+  console.log("🎉 Database seeding completed successfully!");
 }
 
 main()
   .catch((e) => {
-    console.error("Error during seeding:", e);
+    console.error("❌ Error during seeding:", e);
     process.exit(1);
   })
   .finally(async () => {
