@@ -17,53 +17,53 @@ datasource db {
 
 /// Platform user - can be contributor, organization admin, or platform admin
 model User {
-  id        String     @id @default(cuid())
-  email     String     @unique
-  name      String
-  phone     String?
-  language  String     @default("no")
-  
+  id       String  @id @default(cuid())
+  email    String  @unique
+  name     String
+  phone    String?
+  language String  @default("no")
+
   // Authentication fields
-  passwordHash              String?   // Argon2id hash, null for social-only accounts
-  emailVerified             Boolean   @default(false)
-  emailVerificationToken    String?   @unique
-  emailVerificationExpiry   DateTime?
-  
-  passwordResetToken        String?   @unique
-  passwordResetExpiry       DateTime?
-  
+  passwordHash            String? // Argon2id hash, null for social-only accounts
+  emailVerified           Boolean   @default(false)
+  emailVerificationToken  String?   @unique
+  emailVerificationExpiry DateTime?
+
+  passwordResetToken  String?   @unique
+  passwordResetExpiry DateTime?
+
   // Security
-  failedLoginAttempts       Int       @default(0)
-  accountLockedUntil        DateTime?
-  lastLoginAt               DateTime?
-  lastLoginIp               String?
-  
+  failedLoginAttempts Int       @default(0)
+  accountLockedUntil  DateTime?
+  lastLoginAt         DateTime?
+  lastLoginIp         String?
+
   // OAuth (explicitly disabled per Package 2 scope)
   // vippsId                String?   @unique
   // facebookId             String?   @unique
   // googleId               String?   @unique
-  
+
   // Password history (JSON array of Argon2id hashes for password reuse prevention)
-  passwordHistory           Json?
-  
+  passwordHistory Json?
+
   // Status
-  status    UserStatus @default(ACTIVE)
-  
+  status UserStatus @default(ACTIVE)
+
   // Audit fields
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   // Relations
-  roles               UserRole[]
-  sessions            UserSession[]
-  refreshTokens       RefreshToken[]
-  emailVerifications  EmailVerificationToken[]
-  passwordResets      PasswordResetToken[]
-  auditLogs           AuthenticationAuditLog[]
-  consents            ConsentRecord[]
-  contributions       Contribution[]
-  timeCredits         TimeCredit[]
+  roles              UserRole[]
+  sessions           UserSession[]
+  refreshTokens      RefreshToken[]
+  emailVerifications EmailVerificationToken[]
+  passwordResets     PasswordResetToken[]
+  auditLogs          AuthenticationAuditLog[]
+  consents           ConsentRecord[]
+  contributions      Contribution[]
+  timeCredits        TimeCredit[]
 
   @@index([email])
   @@index([status])
@@ -73,26 +73,26 @@ model User {
 
 /// User session for tracking active logins
 model UserSession {
-  id              String    @id @default(cuid())
-  userId          String
-  token           String    @unique // Hashed session identifier
-  refreshTokenId  String?   @unique // Link to refresh token
-  
+  id             String  @id @default(cuid())
+  userId         String
+  token          String  @unique // Hashed session identifier
+  refreshTokenId String? @unique // Link to refresh token
+
   // Device tracking
-  userAgent       String?
-  ipAddress       String?
-  deviceName      String?   // User-provided device name
-  
+  userAgent  String?
+  ipAddress  String?
+  deviceName String? // User-provided device name
+
   // Session lifecycle
-  createdAt       DateTime  @default(now())
-  lastActivityAt  DateTime  @default(now())
-  expiresAt       DateTime
-  revokedAt       DateTime?
-  revokedReason   String?   // "user_logout", "admin_revoke", "token_reuse", "password_change"
-  
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  refreshToken    RefreshToken? @relation(fields: [refreshTokenId], references: [id], onDelete: SetNull)
-  
+  createdAt      DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  revokedReason  String? // "user_logout", "admin_revoke", "token_reuse", "password_change"
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken RefreshToken? @relation(fields: [refreshTokenId], references: [id], onDelete: SetNull)
+
   @@index([userId])
   @@index([token])
   @@index([expiresAt])
@@ -101,22 +101,22 @@ model UserSession {
 
 /// Refresh token for JWT token rotation
 model RefreshToken {
-  id           String    @id @default(cuid())
-  userId       String
-  token        String    @unique // Argon2id hashed refresh token
-  expiresAt    DateTime
-  createdAt    DateTime  @default(now())
-  revokedAt    DateTime?
-  replacedBy   String?   // Token ID that replaced this one
-  revokedReason String?  // "rotation", "logout", "reuse_detected", "password_change"
-  
+  id            String    @id @default(cuid())
+  userId        String
+  token         String    @unique // Argon2id hashed refresh token
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+  replacedBy    String? // Token ID that replaced this one
+  revokedReason String? // "rotation", "logout", "reuse_detected", "password_change"
+
   // Device tracking (optional)
-  userAgent    String?
-  ipAddress    String?
-  
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session      UserSession?
-  
+  userAgent String?
+  ipAddress String?
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session UserSession?
+
   @@index([userId])
   @@index([token])
   @@index([expiresAt])
@@ -128,13 +128,13 @@ model EmailVerificationToken {
   id        String    @id @default(cuid())
   userId    String
   token     String    @unique // Argon2id hashed token
-  email     String    // Email being verified (may differ from current user email)
+  email     String // Email being verified (may differ from current user email)
   expiresAt DateTime
   createdAt DateTime  @default(now())
   usedAt    DateTime?
-  
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@index([token])
   @@index([expiresAt])
@@ -148,10 +148,10 @@ model PasswordResetToken {
   expiresAt DateTime
   createdAt DateTime  @default(now())
   usedAt    DateTime?
-  ipAddress String?   // IP that requested the reset
-  
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  ipAddress String? // IP that requested the reset
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@index([token])
   @@index([expiresAt])
@@ -159,33 +159,33 @@ model PasswordResetToken {
 
 /// Role definition (RBAC)
 model Role {
-  id          String   @id @default(cuid())
-  name        String   @unique // "platform_admin", "org_admin", "user", "moderator"
+  id          String  @id @default(cuid())
+  name        String  @unique // "platform_admin", "org_admin", "user", "moderator"
   description String?
-  isSystem    Boolean  @default(false) // System roles cannot be deleted
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  isSystem    Boolean @default(false) // System roles cannot be deleted
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   permissions RolePermission[]
   users       UserRole[]
-  
+
   @@index([name])
 }
 
 /// Permission definition (RBAC)
 model Permission {
-  id          String   @id @default(cuid())
-  name        String   @unique // "user:create", "campaign:publish", "contribution:approve"
-  resource    String   // "user", "campaign", "contribution", "organization"
-  action      String   // "create", "read", "update", "delete", "publish", "approve"
+  id          String  @id @default(cuid())
+  name        String  @unique // "user:create", "campaign:publish", "contribution:approve"
+  resource    String // "user", "campaign", "contribution", "organization"
+  action      String // "create", "read", "update", "delete", "publish", "approve"
   description String?
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  roles       RolePermission[]
-  
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  roles RolePermission[]
+
   @@unique([resource, action])
   @@index([resource])
   @@index([action])
@@ -193,15 +193,15 @@ model Permission {
 
 /// Many-to-many: Role <-> Permission
 model RolePermission {
-  id           String   @id @default(cuid())
+  id           String @id @default(cuid())
   roleId       String
   permissionId String
-  
-  createdAt    DateTime @default(now())
-  
-  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-  
+
+  createdAt DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
   @@unique([roleId, permissionId])
   @@index([roleId])
   @@index([permissionId])
@@ -209,17 +209,17 @@ model RolePermission {
 
 /// Many-to-many: User <-> Role
 model UserRole {
-  id         String   @id @default(cuid())
+  id         String  @id @default(cuid())
   userId     String
   roleId     String
-  assignedBy String?  // User ID who assigned this role
-  
-  createdAt  DateTime @default(now())
-  expiresAt  DateTime? // Optional role expiration
-  
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  
+  assignedBy String? // User ID who assigned this role
+
+  createdAt DateTime  @default(now())
+  expiresAt DateTime? // Optional role expiration
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
   @@unique([userId, roleId])
   @@index([userId])
   @@index([roleId])
@@ -227,18 +227,18 @@ model UserRole {
 
 /// Authentication audit log for security events
 model AuthenticationAuditLog {
-  id          String    @id @default(cuid())
-  userId      String?   // Null for failed logins or pre-auth events
-  action      String    // "login", "logout", "register", "password_reset", "email_verify", "token_refresh", "account_lock"
-  result      String    // "success", "failure", "error"
-  details     Json?     // Additional context: { reason, errorCode, metadata }
-  ipAddress   String?
-  userAgent   String?
-  location    String?   // Derived from IP (city, country)
-  createdAt   DateTime  @default(now())
-  
-  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  
+  id        String   @id @default(cuid())
+  userId    String? // Null for failed logins or pre-auth events
+  action    String // "login", "logout", "register", "password_reset", "email_verify", "token_refresh", "account_lock"
+  result    String // "success", "failure", "error"
+  details   Json? // Additional context: { reason, errorCode, metadata }
+  ipAddress String?
+  userAgent String?
+  location  String? // Derived from IP (city, country)
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   @@index([userId])
   @@index([action])
   @@index([result])
@@ -248,19 +248,19 @@ model AuthenticationAuditLog {
 
 /// Consent record for GDPR compliance
 model ConsentRecord {
-  id            String    @id @default(cuid())
-  userId        String
-  consentType   String    // "terms_of_service", "privacy_policy", "marketing_emails", "data_processing"
-  consentGiven  Boolean
-  consentText   String?   // Snapshot of the consent text at time of acceptance
-  ipAddress     String?
-  userAgent     String?
-  
-  createdAt     DateTime  @default(now())
-  revokedAt     DateTime?
-  
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id           String  @id @default(cuid())
+  userId       String
+  consentType  String // "terms_of_service", "privacy_policy", "marketing_emails", "data_processing"
+  consentGiven Boolean
+  consentText  String? // Snapshot of the consent text at time of acceptance
+  ipAddress    String?
+  userAgent    String?
+
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@index([consentType])
   @@index([userId, consentType])
@@ -272,22 +272,22 @@ model ConsentRecord {
 
 /// Organization - charity, non-profit, or volunteer organization
 model Organization {
-  id                 String               @id @default(cuid())
+  id                 String             @id @default(cuid())
   name               String
-  organizationNumber String               @unique
+  organizationNumber String             @unique
   type               OrganizationType
   description        String
   email              String
   phone              String?
   website            String?
   adminUserId        String
-  verificationStatus VerificationStatus   @default(PENDING)
+  verificationStatus VerificationStatus @default(PENDING)
   verificationDate   DateTime?
-  status             OrganizationStatus   @default(ACTIVE)
+  status             OrganizationStatus @default(ACTIVE)
   city               String?
   address            String?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
   deletedAt          DateTime?
   campaigns          Campaign[]
 
@@ -329,23 +329,23 @@ model Campaign {
 
 /// Need - specific requirement within a campaign
 model Need {
-  id            String           @id @default(cuid())
+  id            String         @id @default(cuid())
   campaignId    String
   type          NeedType
   title         String
   description   String
   quantity      Int?
   unit          String?
-  targetAmount  Decimal?         @db.Decimal(10, 2)
-  currentAmount Decimal          @default(0) @db.Decimal(10, 2)
-  status        NeedStatus       @default(OPEN)
-  priority      Int              @default(1)
+  targetAmount  Decimal?       @db.Decimal(10, 2)
+  currentAmount Decimal        @default(0) @db.Decimal(10, 2)
+  status        NeedStatus     @default(OPEN)
+  priority      Int            @default(1)
   startDate     DateTime?
   endDate       DateTime?
   metadata      Json?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  campaign      Campaign         @relation(fields: [campaignId], references: [id])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  campaign      Campaign       @relation(fields: [campaignId], references: [id])
   contributions Contribution[]
 
   @@index([campaignId])
@@ -359,21 +359,21 @@ model Need {
 
 /// Contribution - base model for all contribution types
 model Contribution {
-  id            String             @id @default(cuid())
-  userId        String
-  needId        String
-  type          ContributionType
-  status        ContributionStatus @default(PENDING)
-  notes         String?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  deletedAt     DateTime?
-  user          User               @relation(fields: [userId], references: [id])
-  need          Need               @relation(fields: [needId], references: [id])
-  money         MoneyContribution?
-  item          ItemContribution?
-  time          TimeContribution?
-  skills        SkillsContribution?
+  id        String              @id @default(cuid())
+  userId    String
+  needId    String
+  type      ContributionType
+  status    ContributionStatus  @default(PENDING)
+  notes     String?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  deletedAt DateTime?
+  user      User                @relation(fields: [userId], references: [id])
+  need      Need                @relation(fields: [needId], references: [id])
+  money     MoneyContribution?
+  item      ItemContribution?
+  time      TimeContribution?
+  skills    SkillsContribution?
 
   @@index([userId])
   @@index([needId])
@@ -442,17 +442,17 @@ model SkillsContribution {
 
 /// Time credit - earned through volunteer work
 model TimeCredit {
-  id                  String            @id @default(cuid())
-  userId              String
-  hoursEarned         Decimal           @db.Decimal(5, 2)
-  hoursSpent          Decimal           @default(0) @db.Decimal(5, 2)
-  balance             Decimal           @db.Decimal(5, 2)
-  earnedDate          DateTime          @default(now())
-  expiryDate          DateTime?
-  status              TimeCreditStatus  @default(ACTIVE)
-  source              String?
-  user                User              @relation(fields: [userId], references: [id])
-  timeContributions   TimeContribution[]
+  id                String             @id @default(cuid())
+  userId            String
+  hoursEarned       Decimal            @db.Decimal(5, 2)
+  hoursSpent        Decimal            @default(0) @db.Decimal(5, 2)
+  balance           Decimal            @db.Decimal(5, 2)
+  earnedDate        DateTime           @default(now())
+  expiryDate        DateTime?
+  status            TimeCreditStatus   @default(ACTIVE)
+  source            String?
+  user              User               @relation(fields: [userId], references: [id])
+  timeContributions TimeContribution[]
 
   @@index([userId])
   @@index([status])
@@ -461,21 +461,21 @@ model TimeCredit {
 
 /// Recognition partner - business offering benefits to volunteers
 model RecognitionPartner {
-  id          String        @id @default(cuid())
-  name        String
-  description String
-  logo        String?
-  website     String?
-  contactName String?
+  id           String        @id @default(cuid())
+  name         String
+  description  String
+  logo         String?
+  website      String?
+  contactName  String?
   contactEmail String?
   contactPhone String?
-  benefits    Json
-  city        String?
-  address     String?
-  status      PartnerStatus @default(ACTIVE)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  deletedAt   DateTime?
+  benefits     Json
+  city         String?
+  address      String?
+  status       PartnerStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  deletedAt    DateTime?
 
   @@index([status])
   @@index([city])
