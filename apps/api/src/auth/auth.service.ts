@@ -1,21 +1,22 @@
 import { Injectable, UnauthorizedException, ConflictException, BadRequestException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
+import { PrismaClient, UserStatus } from "@prisma/client";
 import * as argon2 from "argon2";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import {
   UserRepository,
   RefreshTokenRepository,
   AuditLogRepository,
 } from "@bidra/database";
-import { UserRole } from "@bidra/types";
+
+const prisma = new PrismaClient();
 
 @Injectable()
 export class AuthService {
   private readonly userRepository: UserRepository;
   private readonly refreshTokenRepository: RefreshTokenRepository;
   private readonly auditLogRepository: AuditLogRepository;
-  private readonly saltRounds = 12;
   private readonly maxFailedAttempts = 5;
   private readonly lockoutDuration = 30 * 60 * 1000; // 30 minutes
 
@@ -38,48 +39,47 @@ export class AuthService {
     phone?: string,
     language: string = "no"
   ) {
-    // Check if user already exists
     const existingUser = await this.userRepository.findByEmail(email);
     if (existingUser) {
       throw new ConflictException("User with this email already exists");
     }
 
-    // Validate password strength
     this.validatePassword(password);
 
-    // Hash password
     const passwordHash = await this.hashPassword(password);
 
-    // Generate email verification token
     const emailVerificationToken = this.generateToken();
-    const emailVerificationExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const emailVerificationExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    // Create user
     const user = await this.userRepository.create({
       email,
       passwordHash,
       name,
       phone,
       language,
-      role: UserRole.USER,
       status: UserStatus.ACTIVE,
       emailVerified: false,
       emailVerificationToken,
       emailVerificationExpiry,
       failedLoginAttempts: 0,
+      passwordHistory: null,
+      accountLockedUntil: null,
+      lastLoginAt: null,
+      lastLoginIp: null,
+      passwordResetToken: null,
+      passwordResetExpiry: null,
+      deletedAt: null,
     });
 
-    // Log registration
     await this.auditLogRepository.logAuthEvent(
       "REGISTER",
       user.id,
-      true,
+      "success",
       undefined,
       undefined,
       { email }
     );
 
-    // TODO: Send verification email (Package 5)
     console.log(`[EMAIL] Verification link: /verify-email?token=${emailVerificationToken}`);
 
     return {
@@ -100,15 +100,13 @@ export class AuthService {
     ipAddress?: string,
     userAgent?: string
   ) {
-    // Find user by email
     const user = await this.userRepository.findByEmail(email);
 
     if (!user) {
-      // Log failed login attempt
       await this.auditLogRepository.logAuthEvent(
         "LOGIN",
         null,
-        false,
+        "failure",
         ipAddress,
         userAgent,
         { email, reason: "user_not_found" }
@@ -116,7 +114,6 @@ export class AuthService {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    // Check if account is locked
     if (user.accountLockedUntil && user.accountLockedUntil > new Date()) {
       const remainingTime = Math.ceil(
         (user.accountLockedUntil.getTime() - Date.now()) / 1000 / 60
@@ -126,21 +123,18 @@ export class AuthService {
       );
     }
 
-    // Verify password
     const isPasswordValid = await this.verifyPassword(password, user.passwordHash || "");
 
     if (!isPasswordValid) {
-      // Increment failed login attempts
       const newFailedAttempts = user.failedLoginAttempts + 1;
       const updates: any = { failedLoginAttempts: newFailedAttempts };
 
-      // Lock account if max attempts reached
       if (newFailedAttempts >= this.maxFailedAttempts) {
         updates.accountLockedUntil = new Date(Date.now() + this.lockoutDuration);
         await this.auditLogRepository.logAuthEvent(
           "ACCOUNT_LOCKED",
           user.id,
-          true,
+          "success",
           ipAddress,
           userAgent,
           { reason: "max_failed_attempts" }
@@ -149,11 +143,10 @@ export class AuthService {
 
       await this.userRepository.update(user.id, updates);
 
-      // Log failed login
       await this.auditLogRepository.logAuthEvent(
         "LOGIN",
         user.id,
-        false,
+        "failure",
         ipAddress,
         userAgent,
         { reason: "invalid_password" }
@@ -162,26 +155,24 @@ export class AuthService {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    // Check if email is verified (optional enforcement)
     if (!user.emailVerified) {
-      // For now, just warn - can be enforced later
       console.warn(`[AUTH] User ${user.email} logging in with unverified email`);
     }
 
-    // Reset failed login attempts and update last login
     await this.userRepository.update(user.id, {
       failedLoginAttempts: 0,
       accountLockedUntil: null,
       lastLoginAt: new Date(),
     });
 
-    // Generate tokens
-    const tokens = await this.generateTokens(user.id, user.email, user.role, rememberMe);
+    const userRoles = user.roles?.map(ur => ur.role.name) || [];
+    const primaryRole = userRoles[0] || "user";
 
-    // Store refresh token
+    const tokens = await this.generateTokens(user.id, user.email, primaryRole, rememberMe);
+
     const refreshTokenExpiry = rememberMe
-      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     const hashedRefreshToken = await this.hashToken(tokens.refreshToken);
 
@@ -191,13 +182,15 @@ export class AuthService {
       expiresAt: refreshTokenExpiry,
       userAgent,
       ipAddress,
+      revokedAt: null,
+      replacedBy: null,
+      revokedReason: null,
     });
 
-    // Log successful login
     await this.auditLogRepository.logAuthEvent(
       "LOGIN",
       user.id,
-      true,
+      "success",
       ipAddress,
       userAgent,
       { method: "email_password" }
@@ -208,7 +201,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role,
+        roles: userRoles,
         emailVerified: user.emailVerified,
       },
       tokens,
@@ -219,40 +212,36 @@ export class AuthService {
    * Refresh access token using refresh token
    */
   async refreshTokens(refreshToken: string, ipAddress?: string, userAgent?: string) {
-    // Hash the incoming token to compare with stored hash
-    const hashedToken = await this.hashToken(refreshToken);
+    const hashedToken = this.hashToken(refreshToken);
 
-    // Find refresh token in database
     const tokenRecord = await this.refreshTokenRepository.findByToken(hashedToken);
 
     if (!tokenRecord) {
       throw new UnauthorizedException("Invalid refresh token");
     }
 
-    // Check if token is revoked
     if (tokenRecord.revokedAt) {
       throw new UnauthorizedException("Refresh token has been revoked");
     }
 
-    // Check if token is expired
     if (tokenRecord.expiresAt < new Date()) {
       throw new UnauthorizedException("Refresh token has expired");
     }
 
-    // Get user
     const user = await this.userRepository.findById(tokenRecord.userId);
     if (!user) {
       throw new UnauthorizedException("User not found");
     }
 
-    // Generate new tokens
-    const newTokens = await this.generateTokens(user.id, user.email, user.role);
+    const userRoles = user.roles?.map(ur => ur.role.name) || [];
+    const primaryRole = userRoles[0] || "user";
 
-    // Revoke old refresh token and store new one
-    await this.refreshTokenRepository.revoke(tokenRecord.id);
+    const newTokens = await this.generateTokens(user.id, user.email, primaryRole);
 
-    const newHashedRefreshToken = await this.hashToken(newTokens.refreshToken);
-    const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    await this.refreshTokenRepository.revoke(tokenRecord.id, "rotation");
+
+    const newHashedRefreshToken = this.hashToken(newTokens.refreshToken);
+    const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await this.refreshTokenRepository.create({
       userId: user.id,
@@ -260,36 +249,38 @@ export class AuthService {
       expiresAt: refreshTokenExpiry,
       userAgent,
       ipAddress,
+      revokedAt: null,
+      replacedBy: null,
+      revokedReason: null,
     });
 
     return newTokens;
   }
 
   /**
-   * Logout user (revoke refresh token)
+   * Logout user
    */
   async logout(userId: string, refreshToken?: string) {
     if (refreshToken) {
-      const hashedToken = await this.hashToken(refreshToken);
+      const hashedToken = this.hashToken(refreshToken);
       try {
-        await this.refreshTokenRepository.revokeByToken(hashedToken);
+        await this.refreshTokenRepository.revokeByToken(hashedToken, "logout");
       } catch (error) {
         // Token might not exist, ignore
       }
     }
 
-    // Log logout
-    await this.auditLogRepository.logAuthEvent("LOGOUT", userId, true);
+    await this.auditLogRepository.logAuthEvent("LOGOUT", userId, "success");
 
     return { message: "Logged out successfully" };
   }
 
   /**
-   * Logout from all devices (revoke all refresh tokens)
+   * Logout from all devices
    */
   async logoutAll(userId: string) {
-    await this.refreshTokenRepository.revokeAllForUser(userId);
-    await this.auditLogRepository.logAuthEvent("LOGOUT_ALL", userId, true);
+    await this.refreshTokenRepository.revokeAllForUser(userId, "logout");
+    await this.auditLogRepository.logAuthEvent("LOGOUT_ALL", userId, "success");
     return { message: "Logged out from all devices" };
   }
 
@@ -307,15 +298,13 @@ export class AuthService {
       throw new BadRequestException("Verification token has expired");
     }
 
-    // Update user
     await this.userRepository.update(user.id, {
       emailVerified: true,
       emailVerificationToken: null,
       emailVerificationExpiry: null,
     });
 
-    // Log verification
-    await this.auditLogRepository.logAuthEvent("EMAIL_VERIFICATION", user.id, true);
+    await this.auditLogRepository.logAuthEvent("EMAIL_VERIFICATION", user.id, "success");
 
     return { message: "Email verified successfully" };
   }
@@ -327,24 +316,20 @@ export class AuthService {
     const user = await this.userRepository.findByEmail(email);
 
     if (!user) {
-      // Don't reveal if email exists
       return { message: "If the email exists, a reset link has been sent" };
     }
 
-    // Generate password reset token
     const passwordResetToken = this.generateToken();
-    const passwordResetExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    const passwordResetExpiry = new Date(Date.now() + 60 * 60 * 1000);
 
     await this.userRepository.update(user.id, {
       passwordResetToken,
       passwordResetExpiry,
     });
 
-    // TODO: Send password reset email (Package 5)
     console.log(`[EMAIL] Password reset link: /reset-password?token=${passwordResetToken}`);
 
-    // Log password reset request
-    await this.auditLogRepository.logAuthEvent("PASSWORD_RESET_REQUEST", user.id, true);
+    await this.auditLogRepository.logAuthEvent("PASSWORD_RESET_REQUEST", user.id, "success");
 
     return { message: "If the email exists, a reset link has been sent" };
   }
@@ -363,10 +348,8 @@ export class AuthService {
       throw new BadRequestException("Reset token has expired");
     }
 
-    // Validate new password
     this.validatePassword(newPassword);
 
-    // Check password history (prevent reuse of last 5 passwords)
     if (user.passwordHistory) {
       const passwordHistory = user.passwordHistory as string[];
       for (const oldHash of passwordHistory) {
@@ -377,10 +360,8 @@ export class AuthService {
       }
     }
 
-    // Hash new password
     const passwordHash = await this.hashPassword(newPassword);
 
-    // Update password history
     const passwordHistory = user.passwordHistory
       ? (user.passwordHistory as string[]).slice(-4)
       : [];
@@ -388,7 +369,6 @@ export class AuthService {
       passwordHistory.push(user.passwordHash);
     }
 
-    // Update user
     await this.userRepository.update(user.id, {
       passwordHash,
       passwordResetToken: null,
@@ -396,17 +376,15 @@ export class AuthService {
       passwordHistory,
     });
 
-    // Revoke all refresh tokens (force re-login)
-    await this.refreshTokenRepository.revokeAllForUser(user.id);
+    await this.refreshTokenRepository.revokeAllForUser(user.id, "password_change");
 
-    // Log password reset
-    await this.auditLogRepository.logAuthEvent("PASSWORD_RESET", user.id, true);
+    await this.auditLogRepository.logAuthEvent("PASSWORD_RESET", user.id, "success");
 
     return { message: "Password reset successfully" };
   }
 
   /**
-   * Validate user by ID (for JWT strategy)
+   * Validate user by ID
    */
   async validateUser(userId: string) {
     const user = await this.userRepository.findById(userId);
@@ -423,19 +401,18 @@ export class AuthService {
   }
 
   /**
-   * Generate JWT access and refresh tokens
+   * Generate JWT tokens
    */
   private async generateTokens(
     userId: string,
     email: string,
-    role: UserRole,
+    role: string,
     rememberMe: boolean = false
   ) {
     const payload = { sub: userId, email, role };
 
     const accessToken = this.jwtService.sign(payload);
 
-    // Refresh token with longer expiration
     const refreshTokenExpiration = rememberMe ? "30d" : "7d";
     const refreshToken = this.jwtService.sign(payload, {
       secret: this.configService.get<string>("JWT_REFRESH_SECRET"),
@@ -449,43 +426,10 @@ export class AuthService {
   }
 
   /**
-   * Hash a password using Argon2id
+   * Hash password using Argon2id
    */
   private async hashPassword(password: string): Promise<string> {
     return argon2.hash(password, {
-      type: argon2.argon2id,
-      memoryCost: 19456, // 19 MiB
-      timeCost: 2,
-      parallelism: 1,
-    });
-  }
-
-  /**
-   * Verify a password against its hash using Argon2id
-   */
-  private async verifyPassword(
-    password: string,
-    hash: string
-  ): Promise<boolean> {
-    try {
-      return await argon2.verify(hash, password);
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Generate a secure random token
-   */
-  private generateToken(length: number = 32): string {
-    return randomBytes(length).toString("hex");
-  }
-
-  /**
-   * Hash a refresh token for storage
-   */
-  private async hashRefreshToken(token: string): Promise<string> {
-    return argon2.hash(token, {
       type: argon2.argon2id,
       memoryCost: 19456,
       timeCost: 2,
@@ -494,10 +438,28 @@ export class AuthService {
   }
 
   /**
-   * Hash token (refresh tokens stored hashed)
+   * Verify password using Argon2id
    */
-  private async hashToken(token: string): Promise<string> {
-    return crypto.createHash("sha256").update(token).digest("hex");
+  private async verifyPassword(password: string, hash: string): Promise<boolean> {
+    try {
+      return await argon2.verify(hash, password);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Generate secure random token
+   */
+  private generateToken(length: number = 32): string {
+    return randomBytes(length).toString("hex");
+  }
+
+  /**
+   * Hash token using SHA-256
+   */
+  private hashToken(token: string): string {
+    return createHash("sha256").update(token).digest("hex");
   }
 
   /**
