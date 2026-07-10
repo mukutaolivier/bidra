@@ -22,11 +22,5 @@ export interface PaginatedResponse<T> {
   };
 }
 
-// Placeholder types - actual domain types will be added later
-export type EntityStatus = "active" | "inactive" | "pending" | "archived";
-
-export interface BaseEntity {
-  id: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
+// Export all domain models
+export * from "./domain";
