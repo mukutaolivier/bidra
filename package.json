@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
+    "@nestjs/cli": "^11.0.24",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/throttler": "^6.5.0",
@@ -46,6 +47,7 @@
     "@supabase/supabase-js": "^2.110.2",
     "@t3-oss/env-nextjs": "^0.12.0",
     "argon2": "^0.44.0",
+    "autoprefixer": "^10.5.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "class-variance-authority": "^0.7.1",
