@@ -13,12 +13,16 @@ import { JwtRefreshStrategy } from "./strategies/jwt-refresh.strategy";
     PassportModule.register({ defaultStrategy: "jwt" }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>("JWT_SECRET"),
-        signOptions: {
-          expiresIn: configService.get<string>("JWT_ACCESS_EXPIRATION", "15m"),
-        },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const accessTokenTtl = configService.get<string>("JWT_ACCESS_EXPIRATION", "15m");
+
+        return {
+          secret: configService.get<string>("JWT_SECRET") ?? "dev-secret",
+          signOptions: {
+            expiresIn: accessTokenTtl as any,
+          },
+        } as any;
+      },
       inject: [ConfigService],
     }),
   ],

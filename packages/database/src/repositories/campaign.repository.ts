@@ -1,6 +1,9 @@
-import { PrismaClient, Campaign, CampaignStatus } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+import { CampaignStatus } from "../../../types/src/domain/enums";
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
+
+type Campaign = any;
 
 /**
  * Repository for Campaign entity

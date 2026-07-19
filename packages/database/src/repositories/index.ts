@@ -8,4 +8,5 @@ export * from "./campaign.repository";
 export * from "./need.repository";
 export * from "./contribution.repository";
 export * from "./refresh-token.repository";
+export * from "./user-session.repository";
 export * from "./audit-log.repository";

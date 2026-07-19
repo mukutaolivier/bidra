@@ -12,10 +12,10 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 export * from "@prisma/client";
 
 // Export repositories
-export * from "./repositories";
+export * from "./repositories/index";
 
 // Export exceptions
-export * from "./exceptions";
+export * from "./exceptions/index";
 
 // Export types
 export * from "./types/repository.types";

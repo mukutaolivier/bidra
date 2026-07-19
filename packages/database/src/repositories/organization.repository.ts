@@ -1,6 +1,9 @@
-import { PrismaClient, Organization, VerificationStatus } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+import { VerificationStatus } from "../../../types/src/domain/enums";
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
+
+type Organization = any;
 
 /**
  * Repository for Organization entity
@@ -33,17 +36,52 @@ export class OrganizationRepository extends BaseRepository<Organization> {
   /**
    * Find all verified organizations
    */
-  async findVerified(options?: FindAllOptions): Promise<Organization[]> {
-    const { skip, take } = this.applyPagination(options?.pagination);
+  async findVerified(options?: FindAllOptions): Promise<any> {
+    const { pagination, includeDeleted } = this.normalizeOptions(options);
+    const { skip, take } = this.applyPagination(pagination);
 
-    return this.prisma.organization.findMany({
-      where: {
-        verificationStatus: VerificationStatus.VERIFIED,
-        deletedAt: options?.includeDeleted ? undefined : null,
+    const [organizations, total] = await Promise.all([
+      this.prisma.organization.findMany({
+        where: {
+          verificationStatus: VerificationStatus.VERIFIED,
+          deletedAt: includeDeleted ? undefined : null,
+        },
+        skip,
+        take,
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.organization.count({
+        where: {
+          verificationStatus: VerificationStatus.VERIFIED,
+          deletedAt: includeDeleted ? undefined : null,
+        },
+      }),
+    ]);
+
+    return this.createPaginatedResult(organizations, total, pagination);
+  }
+
+  async findByOrganizationNumber(organizationNumber: string): Promise<Organization | null> {
+    return this.prisma.organization.findUnique({
+      where: { organizationNumber },
+    });
+  }
+
+  async updateVerificationStatus(
+    id: string,
+    verificationStatus: VerificationStatus
+  ): Promise<Organization> {
+    const existing = await this.findById(id);
+    if (!existing) {
+      this.throwNotFound(id);
+    }
+
+    return this.prisma.organization.update({
+      where: { id },
+      data: {
+        verificationStatus,
+        verifiedAt: verificationStatus === VerificationStatus.VERIFIED ? new Date() : null,
       },
-      skip,
-      take,
-      orderBy: { createdAt: "desc" },
     });
   }
 

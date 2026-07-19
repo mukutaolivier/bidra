@@ -1,4 +1,6 @@
-import { PrismaClient, AuthenticationAuditLog } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+
+type AuthenticationAuditLog = any;
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
 
