@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
+import { ContributionType, ContributionStatus } from "@bidra/types/src/domain/enums";
 import { ContributionRepository } from "../../repositories/contribution.repository";
-import { ContributionStatus, ContributionType } from "@prisma/client";
 
 /**
  * NOTE: These are STUB tests for Package 1/2.
