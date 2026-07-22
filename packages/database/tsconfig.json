@@ -2,8 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "../..",
+    "baseUrl": "../..",
+    "paths": {
+      "@bidra/types/*": ["packages/types/src/*"]
+    }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../types/src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

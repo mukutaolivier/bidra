@@ -11,6 +11,9 @@ coverage
 out/
 build
 dist
+apps/web/next-env.d.ts
+apps/web/tsconfig.tsbuildinfo
+apps/worker/tsconfig.tsbuildinfo
 
 # Production
 dist
@@ -60,3 +63,4 @@ docker-compose.override.yml
 # Logs
 logs
 *.log
+package-lock.json

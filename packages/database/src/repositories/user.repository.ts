@@ -1,6 +1,9 @@
-import { PrismaClient, User, UserStatus } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+import { UserStatus } from "../../../types/src/domain/enums";
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
+
+type User = any;
 
 /**
  * Repository for User entity
@@ -110,24 +113,36 @@ export class UserRepository extends BaseRepository<User> {
   /**
    * Find all users
    */
-  async findAll(options?: FindAllOptions): Promise<User[]> {
-    const { skip, take } = this.applyPagination(options?.pagination);
+  async findAll(options?: FindAllOptions): Promise<any> {
+    const { pagination, where, includeDeleted } = this.normalizeOptions(options);
+    const { skip, take } = this.applyPagination(pagination);
 
-    return this.prisma.user.findMany({
-      where: {
-        deletedAt: options?.includeDeleted ? undefined : null,
-      },
-      include: {
-        roles: {
-          include: {
-            role: true,
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where: {
+          deletedAt: includeDeleted ? undefined : null,
+          ...(where || {}),
+        },
+        include: {
+          roles: {
+            include: {
+              role: true,
+            },
           },
         },
-      },
-      skip,
-      take,
-      orderBy: { createdAt: "desc" },
-    });
+        skip,
+        take,
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.user.count({
+        where: {
+          deletedAt: includeDeleted ? undefined : null,
+          ...(where || {}),
+        },
+      }),
+    ]);
+
+    return this.createPaginatedResult(users, total, pagination);
   }
 
   /**

@@ -1,11 +1,6 @@
 import { PrismaClient } from "@prisma/client";
+import { OrganizationType, VerificationStatus, OrganizationStatus } from "@bidra/types/src/domain/enums";
 import { OrganizationRepository } from "../../repositories/organization.repository";
-import {
-  OrganizationType,
-  VerificationStatus,
-  OrganizationStatus,
-} from "@prisma/client";
-import { EntityNotFoundError } from "../../exceptions";
 
 const prisma = new PrismaClient();
 const orgRepo = new OrganizationRepository(prisma);
@@ -46,7 +41,7 @@ describe("OrganizationRepository", () => {
 
   describe("findByOrganizationNumber", () => {
     it("should find organization by number", async () => {
-      const created = await orgRepo.create({
+      await orgRepo.create({
         name: "Unique Org",
         organizationNumber: "987654321",
         type: OrganizationType.CHARITY,

@@ -60,6 +60,19 @@ export abstract class BaseRepository<T> {
     return { skip, take: limit };
   }
 
+  protected normalizeOptions(options?: FindAllOptions) {
+    const pagination = options?.pagination ?? {
+      page: options?.page ?? 1,
+      limit: options?.limit ?? 20,
+    };
+
+    return {
+      pagination,
+      where: options?.where,
+      includeDeleted: options?.includeDeleted,
+    };
+  }
+
   /**
    * Helper to create paginated result
    */

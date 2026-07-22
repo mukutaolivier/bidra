@@ -1,12 +1,11 @@
 import { Injectable, UnauthorizedException, ConflictException, BadRequestException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { PrismaClient, UserStatus } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import * as argon2 from "argon2";
 import { createHash, randomBytes } from "crypto";
 import {
   UserRepository,
-  RefreshTokenRepository,
   AuditLogRepository,
 } from "@bidra/database";
 
@@ -15,7 +14,6 @@ const prisma = new PrismaClient();
 @Injectable()
 export class AuthService {
   private readonly userRepository: UserRepository;
-  private readonly refreshTokenRepository: RefreshTokenRepository;
   private readonly auditLogRepository: AuditLogRepository;
   private readonly maxFailedAttempts = 5;
   private readonly lockoutDuration = 30 * 60 * 1000; // 30 minutes
@@ -25,7 +23,6 @@ export class AuthService {
     private readonly configService: ConfigService
   ) {
     this.userRepository = new UserRepository(prisma);
-    this.refreshTokenRepository = new RefreshTokenRepository(prisma);
     this.auditLogRepository = new AuditLogRepository(prisma);
   }
 
@@ -57,7 +54,7 @@ export class AuthService {
       name,
       phone,
       language,
-      status: UserStatus.ACTIVE,
+      status: "ACTIVE",
       emailVerified: false,
       emailVerificationToken,
       emailVerificationExpiry,
@@ -80,7 +77,7 @@ export class AuthService {
       { email }
     );
 
-    console.log(`[EMAIL] Verification link: /verify-email?token=${emailVerificationToken}`);
+    console.log("[EMAIL] Verification link generated for new account");
 
     return {
       id: user.id,
@@ -168,23 +165,53 @@ export class AuthService {
     const userRoles = user.roles?.map(ur => ur.role.name) || [];
     const primaryRole = userRoles[0] || "user";
 
-    const tokens = await this.generateTokens(user.id, user.email, primaryRole, rememberMe);
+    const refreshTokenExpiresAt = this.getRefreshTokenExpiry(rememberMe);
+    const session = await prisma.$transaction(async (transaction) => {
+      const createdSession = await transaction.userSession.create({
+        data: {
+          userId: user.id,
+          token: this.hashToken(this.generateToken()),
+          userAgent,
+          ipAddress,
+          deviceName: this.getDeviceName(userAgent),
+          createdAt: new Date(),
+          lastActivityAt: new Date(),
+          expiresAt: refreshTokenExpiresAt,
+          revokedAt: null,
+          revokedReason: null,
+        },
+      });
 
-    const refreshTokenExpiry = rememberMe
-      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const rawRefreshToken = await this.generateRefreshToken(user.id, user.email, primaryRole, createdSession.id, refreshTokenExpiresAt);
+      const hashedRefreshToken = this.hashToken(rawRefreshToken);
 
-    const hashedRefreshToken = await this.hashToken(tokens.refreshToken);
+      const createdRefreshToken = await transaction.refreshToken.create({
+        data: {
+          userId: user.id,
+          sessionId: createdSession.id,
+          token: hashedRefreshToken,
+          expiresAt: refreshTokenExpiresAt,
+          userAgent,
+          ipAddress,
+          revokedAt: null,
+          replacedBy: null,
+          revokedReason: null,
+        },
+      });
 
-    await this.refreshTokenRepository.create({
-      userId: user.id,
-      token: hashedRefreshToken,
-      expiresAt: refreshTokenExpiry,
-      userAgent,
-      ipAddress,
-      revokedAt: null,
-      replacedBy: null,
-      revokedReason: null,
+      await transaction.userSession.update({
+        where: { id: createdSession.id },
+        data: {
+          refreshTokenId: createdRefreshToken.id,
+        },
+      });
+
+      return {
+        sessionId: createdSession.id,
+        accessToken: this.generateAccessToken(user.id, user.email, primaryRole, createdSession.id),
+        refreshToken: rawRefreshToken,
+        refreshTokenExpiresAt,
+      };
     });
 
     await this.auditLogRepository.logAuthEvent(
@@ -203,8 +230,13 @@ export class AuthService {
         name: user.name,
         roles: userRoles,
         emailVerified: user.emailVerified,
+        sessionId: session.sessionId,
       },
-      tokens,
+      tokens: {
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        refreshTokenExpiresAt: session.refreshTokenExpiresAt,
+      },
     };
   }
 
@@ -214,59 +246,143 @@ export class AuthService {
   async refreshTokens(refreshToken: string, ipAddress?: string, userAgent?: string) {
     const hashedToken = this.hashToken(refreshToken);
 
-    const tokenRecord = await this.refreshTokenRepository.findByToken(hashedToken);
+    const result = await prisma.$transaction(async (transaction) => {
+      const tokenRecord = await transaction.refreshToken.findUnique({
+        where: { token: hashedToken },
+        include: {
+          session: true,
+          user: true,
+        },
+      });
 
-    if (!tokenRecord) {
-      throw new UnauthorizedException("Invalid refresh token");
-    }
+      if (!tokenRecord || !tokenRecord.session) {
+        throw new UnauthorizedException("Invalid refresh token");
+      }
 
-    if (tokenRecord.revokedAt) {
-      throw new UnauthorizedException("Refresh token has been revoked");
-    }
+      if (tokenRecord.session.revokedAt) {
+        throw new UnauthorizedException("Invalid refresh token");
+      }
 
-    if (tokenRecord.expiresAt < new Date()) {
-      throw new UnauthorizedException("Refresh token has expired");
-    }
+      if (tokenRecord.expiresAt < new Date()) {
+        await this.revokeSessionFamily(transaction, tokenRecord.sessionId, "expired_token");
+        throw new UnauthorizedException("Invalid refresh token");
+      }
 
-    const user = await this.userRepository.findById(tokenRecord.userId);
-    if (!user) {
-      throw new UnauthorizedException("User not found");
-    }
+      const tokenRevocation = await transaction.refreshToken.updateMany({
+        where: {
+          id: tokenRecord.id,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+          revokedReason: "rotation",
+        },
+      });
 
-    const userRoles = user.roles?.map(ur => ur.role.name) || [];
-    const primaryRole = userRoles[0] || "user";
+      if (tokenRevocation.count !== 1) {
+        await this.revokeSessionFamily(transaction, tokenRecord.sessionId, "reuse_detected");
+        throw new UnauthorizedException("Invalid refresh token");
+      }
 
-    const newTokens = await this.generateTokens(user.id, user.email, primaryRole);
+      const user = tokenRecord.user;
+      const userRoles = user.roles?.map((ur) => ur.role.name) || [];
+      const primaryRole = userRoles[0] || "user";
+      const sessionExpiresAt = tokenRecord.session.expiresAt;
+      const secondsRemaining = Math.max(
+        60,
+        Math.floor((sessionExpiresAt.getTime() - Date.now()) / 1000)
+      );
 
-    await this.refreshTokenRepository.revoke(tokenRecord.id, "rotation");
+      const newRefreshToken = await this.generateRefreshToken(
+        user.id,
+        user.email,
+        primaryRole,
+        tokenRecord.sessionId,
+        sessionExpiresAt
+      );
 
-    const newHashedRefreshToken = this.hashToken(newTokens.refreshToken);
-    const refreshTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const newHashedRefreshToken = this.hashToken(newRefreshToken);
 
-    await this.refreshTokenRepository.create({
-      userId: user.id,
-      token: newHashedRefreshToken,
-      expiresAt: refreshTokenExpiry,
-      userAgent,
-      ipAddress,
-      revokedAt: null,
-      replacedBy: null,
-      revokedReason: null,
+      const createdRefreshToken = await transaction.refreshToken.create({
+        data: {
+          userId: user.id,
+          sessionId: tokenRecord.sessionId,
+          token: newHashedRefreshToken,
+          expiresAt: sessionExpiresAt,
+          userAgent,
+          ipAddress,
+          revokedAt: null,
+          replacedBy: null,
+          revokedReason: null,
+        },
+      });
+
+      await transaction.refreshToken.update({
+        where: { id: tokenRecord.id },
+        data: {
+          replacedBy: createdRefreshToken.id,
+        },
+      });
+
+      await transaction.userSession.update({
+        where: { id: tokenRecord.sessionId },
+        data: {
+          refreshTokenId: createdRefreshToken.id,
+          lastActivityAt: new Date(),
+          reuseDetectedAt: null,
+          revokedAt: null,
+          revokedReason: null,
+        },
+      });
+
+      return {
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          roles: userRoles,
+          emailVerified: user.emailVerified,
+          sessionId: tokenRecord.sessionId,
+        },
+        accessToken: this.generateAccessToken(user.id, user.email, primaryRole, tokenRecord.sessionId),
+        refreshToken: newRefreshToken,
+        refreshTokenExpiresAt: sessionExpiresAt,
+        sessionId: tokenRecord.sessionId,
+        secondsRemaining,
+      };
     });
 
-    return newTokens;
+    await this.auditLogRepository.logAuthEvent(
+      "TOKEN_REFRESH",
+      result.user.id,
+      "success",
+      ipAddress,
+      userAgent,
+      { sessionId: result.sessionId }
+    );
+
+    return result;
   }
 
   /**
    * Logout user
    */
-  async logout(userId: string, refreshToken?: string) {
-    if (refreshToken) {
+  async logout(userId: string, sessionId?: string, refreshToken?: string) {
+    if (sessionId) {
+      await prisma.$transaction(async (transaction) => {
+        await this.revokeSessionFamily(transaction, sessionId, "logout");
+      });
+    } else if (refreshToken) {
       const hashedToken = this.hashToken(refreshToken);
-      try {
-        await this.refreshTokenRepository.revokeByToken(hashedToken, "logout");
-      } catch (error) {
-        // Token might not exist, ignore
+      const tokenRecord = await prisma.refreshToken.findUnique({
+        where: { token: hashedToken },
+        include: { session: true },
+      });
+
+      if (tokenRecord?.sessionId) {
+        await prisma.$transaction(async (transaction) => {
+          await this.revokeSessionFamily(transaction, tokenRecord.sessionId, "logout");
+        });
       }
     }
 
@@ -279,7 +395,30 @@ export class AuthService {
    * Logout from all devices
    */
   async logoutAll(userId: string) {
-    await this.refreshTokenRepository.revokeAllForUser(userId, "logout");
+    await prisma.$transaction(async (transaction) => {
+      await transaction.refreshToken.updateMany({
+        where: {
+          userId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+          revokedReason: "logout",
+        },
+      });
+
+      await transaction.userSession.updateMany({
+        where: {
+          userId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+          revokedReason: "logout",
+        },
+      });
+    });
+
     await this.auditLogRepository.logAuthEvent("LOGOUT_ALL", userId, "success");
     return { message: "Logged out from all devices" };
   }
@@ -327,7 +466,7 @@ export class AuthService {
       passwordResetExpiry,
     });
 
-    console.log(`[EMAIL] Password reset link: /reset-password?token=${passwordResetToken}`);
+    console.log("[EMAIL] Password reset link generated");
 
     await this.auditLogRepository.logAuthEvent("PASSWORD_RESET_REQUEST", user.id, "success");
 
@@ -376,11 +515,102 @@ export class AuthService {
       passwordHistory,
     });
 
-    await this.refreshTokenRepository.revokeAllForUser(user.id, "password_change");
+    await prisma.refreshToken.updateMany({
+      where: {
+        userId: user.id,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+        revokedReason: "password_change",
+      },
+    });
 
     await this.auditLogRepository.logAuthEvent("PASSWORD_RESET", user.id, "success");
 
     return { message: "Password reset successfully" };
+  }
+
+  async resendVerification(email: string) {
+    const user = await this.userRepository.findByEmail(email);
+
+    if (!user || user.emailVerified) {
+      return { message: "If the email exists, a verification link has been sent" };
+    }
+
+    const emailVerificationToken = this.generateToken();
+    const emailVerificationExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await this.userRepository.update(user.id, {
+      emailVerificationToken,
+      emailVerificationExpiry,
+    });
+
+    console.log("[EMAIL] Verification link regenerated");
+
+    await this.auditLogRepository.logAuthEvent("EMAIL_VERIFICATION_REQUEST", user.id, "success");
+
+    return { message: "If the email exists, a verification link has been sent" };
+  }
+
+  async listSessions(userId: string) {
+    return prisma.userSession.findMany({
+      where: {
+        userId,
+      },
+      include: {
+        refreshToken: true,
+      },
+      orderBy: {
+        lastActivityAt: "desc",
+      },
+    });
+  }
+
+  async revokeSession(userId: string, sessionId: string, currentSessionId?: string) {
+    const session = await prisma.userSession.findFirst({
+      where: {
+        id: sessionId,
+        userId,
+      },
+    });
+
+    if (!session) {
+      return { message: "Session revoked" };
+    }
+
+    await prisma.$transaction(async (transaction) => {
+      await this.revokeSessionFamily(transaction, session.id, "user_logout");
+    });
+
+    if (currentSessionId && currentSessionId === sessionId) {
+      return { message: "Current session revoked" };
+    }
+
+    return { message: "Session revoked" };
+  }
+
+  async revokeOtherSessions(userId: string, currentSessionId: string) {
+    const sessions = await prisma.userSession.findMany({
+      where: {
+        userId,
+        id: {
+          not: currentSessionId,
+        },
+        revokedAt: null,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    await prisma.$transaction(async (transaction) => {
+      for (const session of sessions) {
+        await this.revokeSessionFamily(transaction, session.id, "logout_other_sessions");
+      }
+    });
+
+    return { message: "Other sessions revoked", count: sessions.length };
   }
 
   /**
@@ -393,38 +623,109 @@ export class AuthService {
       throw new UnauthorizedException("User not found");
     }
 
-    if (user.status !== UserStatus.ACTIVE) {
+    if (user.status !== "ACTIVE") {
       throw new UnauthorizedException("User account is not active");
     }
 
     return user;
   }
 
-  /**
-   * Generate JWT tokens
-   */
-  private async generateTokens(
+  private generateAccessToken(userId: string, email: string, role: string, sessionId: string): string {
+    return this.jwtService.sign({
+      sub: userId,
+      email,
+      role,
+      sid: sessionId,
+    });
+  }
+
+  private async generateRefreshToken(
     userId: string,
     email: string,
     role: string,
-    rememberMe: boolean = false
-  ) {
-    const payload = { sub: userId, email, role };
+    sessionId: string,
+    expiresAt: Date
+  ): Promise<string> {
+    const expiresInSeconds = Math.max(60, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
 
-    const accessToken = this.jwtService.sign(payload);
-
-    const refreshTokenExpiration = rememberMe ? "30d" : "7d";
-    const refreshToken = this.jwtService.sign(payload, {
-      secret: this.configService.get<string>("JWT_REFRESH_SECRET"),
-      expiresIn: refreshTokenExpiration,
-    });
-
-    return {
-      accessToken,
-      refreshToken,
-    };
+    return this.jwtService.sign(
+      {
+        sub: userId,
+        email,
+        role,
+        sid: sessionId,
+      },
+      {
+        secret: this.configService.get<string>("JWT_REFRESH_SECRET"),
+        expiresIn: expiresInSeconds,
+      }
+    );
   }
 
+  private getRefreshTokenExpiry(rememberMe: boolean): Date {
+    return rememberMe
+      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  }
+
+  private getDeviceName(userAgent?: string): string | null {
+    if (!userAgent) {
+      return null;
+    }
+
+    if (userAgent.includes("Mobile")) {
+      return "Mobile browser";
+    }
+
+    if (userAgent.includes("Chrome")) {
+      return "Chrome browser";
+    }
+
+    if (userAgent.includes("Firefox")) {
+      return "Firefox browser";
+    }
+
+    if (userAgent.includes("Safari")) {
+      return "Safari browser";
+    }
+
+    return "Desktop browser";
+  }
+
+  private async revokeSessionFamily(
+    transaction: typeof prisma,
+    sessionId: string,
+    reason: string
+  ): Promise<void> {
+    const now = new Date();
+
+    await transaction.refreshToken.updateMany({
+      where: {
+        sessionId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: now,
+        revokedReason: reason,
+      },
+    });
+
+    await transaction.userSession.updateMany({
+      where: {
+        id: sessionId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: now,
+        revokedReason: reason,
+        reuseDetectedAt: reason === "reuse_detected" ? now : undefined,
+      },
+    });
+  }
+
+  /**
+   * Generate JWT tokens
+   */
   /**
    * Hash password using Argon2id
    */

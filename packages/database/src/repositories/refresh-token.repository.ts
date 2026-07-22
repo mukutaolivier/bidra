@@ -1,6 +1,8 @@
-import { PrismaClient, RefreshToken } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { BaseRepository } from "./base.repository";
-import { FindAllOptions, PaginatedResult } from "../types/repository.types";
+import { FindAllOptions } from "../types/repository.types";
+
+type RefreshToken = any;
 
 /**
  * Repository for RefreshToken entity
@@ -131,7 +133,7 @@ export class RefreshTokenRepository extends BaseRepository<RefreshToken> {
   /**
    * Revoke all tokens for a user (logout everywhere)
    */
-  async revokeAllForUser(userId: string): Promise<number> {
+  async revokeAllForUser(userId: string, reason?: string): Promise<number> {
     const result = await this.prisma.refreshToken.updateMany({
       where: {
         userId,
@@ -139,6 +141,7 @@ export class RefreshTokenRepository extends BaseRepository<RefreshToken> {
       },
       data: {
         revokedAt: new Date(),
+        revokedReason: reason ?? null,
       },
     });
 

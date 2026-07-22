@@ -74,10 +74,11 @@ model User {
 
 /// User session for tracking active logins
 model UserSession {
-  id             String  @id @default(cuid())
-  userId         String
-  token          String  @unique // Hashed session identifier
-  refreshTokenId String? @unique // Link to refresh token
+  id              String    @id @default(cuid())
+  userId          String
+  token           String    @unique // Hashed session identifier
+  refreshTokenId  String?   @unique // Link to refresh token
+  reuseDetectedAt DateTime?
 
   // Device tracking
   userAgent  String?
@@ -91,8 +92,9 @@ model UserSession {
   revokedAt      DateTime?
   revokedReason  String? // "user_logout", "admin_revoke", "token_reuse", "password_change"
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  refreshToken RefreshToken? @relation(fields: [refreshTokenId], references: [id], onDelete: SetNull)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken  RefreshToken?  @relation("CurrentSessionRefreshToken", fields: [refreshTokenId], references: [id], onDelete: SetNull)
+  refreshTokens RefreshToken[] @relation("SessionRefreshTokens")
 
   @@index([userId])
   @@index([token])
@@ -104,21 +106,26 @@ model UserSession {
 model RefreshToken {
   id            String    @id @default(cuid())
   userId        String
+  sessionId     String
   token         String    @unique // Argon2id hashed refresh token
   expiresAt     DateTime
   createdAt     DateTime  @default(now())
   revokedAt     DateTime?
-  replacedBy    String? // Token ID that replaced this one
+  replacedBy    String?   @unique // Token ID that replaced this one
   revokedReason String? // "rotation", "logout", "reuse_detected", "password_change"
 
   // Device tracking (optional)
   userAgent String?
   ipAddress String?
 
-  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session UserSession?
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session           UserSession   @relation("SessionRefreshTokens", fields: [sessionId], references: [id], onDelete: Cascade)
+  currentSession    UserSession?  @relation("CurrentSessionRefreshToken")
+  replacedByToken   RefreshToken? @relation("RefreshTokenReplacement", fields: [replacedBy], references: [id], onDelete: SetNull)
+  replacedFromToken RefreshToken? @relation("RefreshTokenReplacement")
 
   @@index([userId])
+  @@index([sessionId])
   @@index([token])
   @@index([expiresAt])
   @@index([userId, revokedAt])

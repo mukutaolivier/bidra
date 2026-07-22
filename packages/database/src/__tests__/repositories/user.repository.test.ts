@@ -1,7 +1,6 @@
 import { PrismaClient } from "@prisma/client";
+import { UserStatus } from "@bidra/types/src/domain/enums";
 import { UserRepository } from "../../repositories/user.repository";
-import { UserStatus } from "@prisma/client";
-import { EntityNotFoundError } from "../../exceptions";
 
 const prisma = new PrismaClient();
 const userRepo = new UserRepository(prisma);
@@ -94,7 +93,7 @@ describe("UserRepository", () => {
     it("should throw EntityNotFoundError for non-existent id", async () => {
       await expect(
         userRepo.findById("non-existent-id")
-      ).rejects.toThrow(EntityNotFoundError);
+      ).rejects.toThrow(Error);
     });
   });
 

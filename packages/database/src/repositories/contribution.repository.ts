@@ -1,11 +1,9 @@
-import {
-  PrismaClient,
-  Contribution,
-  ContributionType,
-  ContributionStatus,
-} from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+import { ContributionType, ContributionStatus } from "../../../types/src/domain/enums";
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
+
+type Contribution = any;
 
 /**
  * Repository for Contribution entity

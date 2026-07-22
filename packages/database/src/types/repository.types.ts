@@ -19,8 +19,11 @@ export interface SortOptions {
  */
 export interface FindAllOptions {
   pagination?: PaginationOptions;
+  page?: number;
+  limit?: number;
   sort?: SortOptions;
   includeDeleted?: boolean;
+  where?: Record<string, unknown>;
 }
 
 /**

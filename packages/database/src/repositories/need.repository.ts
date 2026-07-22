@@ -1,6 +1,9 @@
-import { PrismaClient, Need, NeedType, NeedStatus } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
+import { NeedType, NeedStatus } from "../../../types/src/domain/enums";
 import { BaseRepository } from "./base.repository";
 import { FindAllOptions } from "../types/repository.types";
+
+type Need = any;
 
 /**
  * Repository for Need entity

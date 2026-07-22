@@ -3,6 +3,8 @@ import {
   Post,
   Body,
   Get,
+  Delete,
+  Param,
   Query,
   UseGuards,
   Request,
@@ -10,11 +12,14 @@ import {
   HttpStatus,
   Ip,
   Headers,
+  Res,
+  UnauthorizedException,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from "@nestjs/swagger";
+import type { Response } from "express";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
-import { LocalAuthGuard } from "./guards/local-auth.guard";
+import { clearRefreshCookie, getCookieValue, REFRESH_COOKIE_NAME, setRefreshCookie } from "./auth-cookie";
 
 @ApiTags("Authentication")
 @Controller("auth")
@@ -45,9 +50,16 @@ export class AuthController {
     @Body("password") password: string,
     @Body("rememberMe") rememberMe?: boolean,
     @Ip() ipAddress?: string,
-    @Headers("user-agent") userAgent?: string
+    @Headers("user-agent") userAgent?: string,
+    @Res({ passthrough: true }) response?: Response
   ) {
-    return this.authService.login(email, password, rememberMe, ipAddress, userAgent);
+    const result = await this.authService.login(email, password, rememberMe, ipAddress, userAgent);
+    setRefreshCookie(response as Response, result.tokens.refreshToken, result.tokens.refreshTokenExpiresAt);
+
+    return {
+      user: result.user,
+      accessToken: result.tokens.accessToken,
+    };
   }
 
   @Post("refresh")
@@ -55,12 +67,20 @@ export class AuthController {
   @ApiOperation({ summary: "Refresh access token" })
   @ApiResponse({ status: 200, description: "Token refreshed successfully" })
   @ApiResponse({ status: 401, description: "Invalid refresh token" })
-  async refresh(
-    @Body("refreshToken") refreshToken: string,
-    @Ip() ipAddress?: string,
-    @Headers("user-agent") userAgent?: string
-  ) {
-    return this.authService.refreshTokens(refreshToken, ipAddress, userAgent);
+  async refresh(@Request() req: any, @Ip() ipAddress?: string, @Headers("user-agent") userAgent?: string, @Res({ passthrough: true }) response?: Response) {
+    const refreshToken = getCookieValue(req.headers?.cookie, REFRESH_COOKIE_NAME);
+
+    if (!refreshToken) {
+      throw new UnauthorizedException("Invalid refresh token");
+    }
+
+    const result = await this.authService.refreshTokens(refreshToken, ipAddress, userAgent);
+    setRefreshCookie(response as Response, result.refreshToken, result.refreshTokenExpiresAt);
+
+    return {
+      user: result.user,
+      accessToken: result.accessToken,
+    };
   }
 
   @Post("logout")
@@ -69,8 +89,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Logout current session" })
   @ApiResponse({ status: 200, description: "Logged out successfully" })
-  async logout(@Request() req: any, @Body("refreshToken") refreshToken?: string) {
-    return this.authService.logout(req.user.id, refreshToken);
+  async logout(@Request() req: any, @Res({ passthrough: true }) response?: Response) {
+    const refreshToken = getCookieValue(req.headers?.cookie, REFRESH_COOKIE_NAME) || undefined;
+    const result = await this.authService.logout(req.user.id, req.user.sessionId, refreshToken);
+    clearRefreshCookie(response as Response);
+    return result;
   }
 
   @Post("logout-all")
@@ -79,8 +102,18 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Logout from all devices" })
   @ApiResponse({ status: 200, description: "Logged out from all devices" })
-  async logoutAll(@Request() req: any) {
-    return this.authService.logoutAll(req.user.id);
+  async logoutAll(@Request() req: any, @Res({ passthrough: true }) response?: Response) {
+    const result = await this.authService.logoutAll(req.user.id);
+    clearRefreshCookie(response as Response);
+    return result;
+  }
+
+  @Post("resend-verification")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Resend email verification link" })
+  @ApiResponse({ status: 200, description: "Verification link sent if the account exists" })
+  async resendVerification(@Body("email") email: string) {
+    return this.authService.resendVerification(email);
   }
 
   @Get("verify-email")
@@ -124,6 +157,33 @@ export class AuthController {
       name: req.user.name,
       role: req.user.role,
       emailVerified: req.user.emailVerified,
+      sessionId: req.user.sessionId,
     };
+  }
+
+  @Get("sessions")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "List active sessions" })
+  async sessions(@Request() req: any) {
+    return this.authService.listSessions(req.user.id);
+  }
+
+  @Delete("sessions/:sessionId")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Revoke a session" })
+  async revokeSession(@Request() req: any, @Param("sessionId") sessionId: string) {
+    return this.authService.revokeSession(req.user.id, sessionId, req.user.sessionId);
+  }
+
+  @Post("sessions/revoke-others")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Revoke all other sessions" })
+  async revokeOtherSessions(@Request() req: any) {
+    return this.authService.revokeOtherSessions(req.user.id, req.user.sessionId);
   }
 }
